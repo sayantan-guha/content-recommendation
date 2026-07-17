@@ -1,11 +1,12 @@
 import pandas as pd
 import numpy as np
 import ast
+from pathlib import Path
 from collections import Counter
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-DATA = '/Users/harisankarm/Documents/GIM/Hoichoi/content_recommendation/data'
+DATA = str(Path(__file__).resolve().parent.parent / 'data')
 
 content = pd.read_csv(f'{DATA}/content_features_500_tagged.csv')
 
