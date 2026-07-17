@@ -16,4 +16,9 @@ data/*
 !data/series_display_names.csv
 !data/user_title_watch_sample_2218.csv
 !data/content_features_series_rollup_structured.csv
+# Full-catalog scale-up (775 titles: 472 movies + 303 series, vs. the 500-title
+# sample above) -- read/written by src/pipeline_full_catalog.py.
+!data/content_features_full_tagged.csv
+!data/structured_linkage_full.csv
+!data/content_features_full_catalog_rollup.csv
 _archive/
