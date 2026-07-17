@@ -2,19 +2,14 @@
 Sample UI for the Hoichoi content-recommendation model.
 
 Thin client over the backend API (backend/app.py), which fits the full-catalog
-model (8 content-category clusters, 6 audience clusters, popularity^0.7 x
-cluster_rate^0.3 x creator_boost scoring) and serves it as JSON. This app just
-renders it: watch-history genre breakdown, top 10 recommendations (movies +
-series, single merged list), and a held-out validation check (hide one
-watched title, see if the model would have surfaced it back in the top 10/20).
+recommendation model and serves it as JSON. This app just renders the
+recommendations for a picked viewer -- no model internals shown.
 
 Run the backend first:  uvicorn backend.app:app --port 8000
 Then the UI:             streamlit run ui/app.py
 """
 import os
-from collections import Counter
 
-import pandas as pd
 import requests
 import streamlit as st
 
@@ -76,6 +71,11 @@ def inject_css():
             border:1px solid #e0e0e0; border-radius:9999px; padding: 4px 14px;
             letter-spacing:0.04em; text-transform:uppercase;
         }
+        .viewer-picker div[data-baseweb="select"] > div {
+            border-radius: 9999px !important; border-color:#e0e0e0 !important;
+            font-family:'Manrope',sans-serif; background:#fff;
+        }
+        .viewer-picker label { display:none; }
         .hero {
             border-radius: 24px; padding: 2.4rem; margin-bottom: 1.8rem;
             background: __GRADIENT__;
@@ -172,17 +172,8 @@ def render_rail(title, items):
 def main():
     inject_css()
 
-    st.markdown(
-        """
-        <div class="hoichoi-nav">
-            <div><span class="hoichoi-logo">hoichoi</span><span class="hoichoi-tag">Recommendation Engine — Internal Demo</span></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     try:
-        health = api_get("/health")
+        api_get("/health")
     except requests.exceptions.RequestException:
         st.error(
             f"Can't reach the backend API at `{API_BASE}`. Start it with:\n\n"
@@ -192,23 +183,23 @@ def main():
 
     eval_users = api_get("/users")["users"]
 
-    with st.sidebar:
-        st.markdown("### Pick a viewer")
-        uid = st.selectbox("user_id", eval_users, index=0)
-        st.markdown("---")
+    nav_col, picker_col = st.columns([2, 1])
+    with nav_col:
         st.markdown(
-            "**Model:** `popularity_rate^0.7 × cluster_rate^0.3 × creator_boost`\n\n"
-            "8 content categories · 6 audience clusters, fit on the full 775-title catalog.\n\n"
-            "**Held-out test:** hide one watched title, rebuild the profile from the "
-            "rest, and check whether the model would've surfaced it back in the top 10/20."
-        )
-        st.markdown(
-            f'<div class="api-status">API: {API_BASE} · {health["users_loaded"]} users loaded</div>',
+            """
+            <div class="hoichoi-nav" style="border-bottom:none; margin-bottom:0; padding-bottom:0;">
+                <span class="hoichoi-logo">hoichoi</span>
+                <span class="hoichoi-tag">Recommendation Engine</span>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
+    with picker_col:
+        st.markdown('<div class="viewer-picker">', unsafe_allow_html=True)
+        uid = st.selectbox("Viewer", eval_users, index=0, label_visibility="collapsed")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    history = api_get(f"/users/{uid}/history")["history"]
-    watched_idx = {it["idx"] for it in history}
+    st.markdown('<hr style="border-color:#e8e8e8; margin: 0.6rem 0 1.4rem;">', unsafe_allow_html=True)
 
     rec_resp = api_get(f"/users/{uid}/recommendations", top_n=10)
     top10 = rec_resp["recommendations"]
@@ -229,66 +220,15 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Rail 1: continue watching / watch history
-    history_items = [
-        {
-            "title": it["title"],
-            "subtitle": f"{it['type'].title()} • {it['genre']}",
-            "badge_type": it["type"],
-        }
-        for it in history
-    ]
-    render_rail(f"Continue Watching ({len(history_items)} titles)", history_items)
-
-    # Rail 2: top 10 recommendations
     rec_items = [
         {
             "title": it["title"],
             "subtitle": f"{it['type'].title()} • {it['genre']}",
             "badge_type": it["type"],
-            "rank": rank,
-            "watched": it["idx"] in watched_idx,
         }
-        for rank, it in enumerate(top10, start=1)
+        for it in top10
     ]
     render_rail("Recommended For You", rec_items)
-
-    # Held-out validation, styled as a small verdict banner + genre breakdown.
-    st.markdown('<div class="rail-title">Held-out validation</div>', unsafe_allow_html=True)
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        held_choice = st.selectbox(
-            "Hide this title and see if the model recommends it back:",
-            options=history,
-            format_func=lambda it: it["title"],
-        )
-        held_resp = api_get(f"/users/{uid}/recommendations", top_n=10, held_out_idx=held_choice["idx"])
-        rank = held_resp["held_out"]["rank"]
-        held_title = held_choice["title"]
-        if rank is None:
-            st.markdown(
-                f'<div class="verdict-miss">⚠ \'{held_title}\' wasn\'t in the eligible candidate pool.</div>',
-                unsafe_allow_html=True,
-            )
-        elif rank <= 10:
-            st.markdown(
-                f'<div class="verdict-hit">✅ HIT — \'{held_title}\' would rank #{rank} (top 10)</div>',
-                unsafe_allow_html=True,
-            )
-        elif rank <= 20:
-            st.markdown(
-                f'<div class="verdict-close">〜 CLOSE — \'{held_title}\' would rank #{rank} (top 20)</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f'<div class="verdict-miss">❌ MISS — \'{held_title}\' would rank #{rank}</div>',
-                unsafe_allow_html=True,
-            )
-    with col2:
-        genre_counts = pd.Series(Counter(it["genre"] for it in history)).sort_values(ascending=False)
-        st.caption("Viewer's genre breakdown")
-        st.bar_chart(genre_counts)
 
 
 if __name__ == "__main__":
