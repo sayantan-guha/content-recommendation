@@ -6,5 +6,14 @@ __pycache__/
 
 # Raw / derived data (user PII: watch history, interactions, subscriptions) --
 # excluded from version control by choice, same policy as the parent Hoichoi repo.
-data/
+# Exceptions below are the minimal set src/pipeline_series_structured.py actually
+# reads/writes -- everything else in data/ (experiment sweeps, old versions, other
+# user-watch samples) stays excluded. Append more exceptions here as the pipeline's
+# data needs grow.
+data/*
+!data/content_features_500_tagged.csv
+!data/structured_linkage_350ep.csv
+!data/series_display_names.csv
+!data/user_title_watch_sample_2218.csv
+!data/content_features_series_rollup_structured.csv
 _archive/
