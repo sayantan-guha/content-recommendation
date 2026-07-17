@@ -2,3 +2,9 @@
 *.pyc
 __pycache__/
 .env
+*.env
+
+# Raw / derived data (user PII: watch history, interactions, subscriptions) --
+# excluded from version control by choice, same policy as the parent Hoichoi repo.
+data/
+_archive/
