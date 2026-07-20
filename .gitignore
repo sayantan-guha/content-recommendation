@@ -21,4 +21,9 @@ data/*
 !data/content_features_full_tagged.csv
 !data/structured_linkage_full.csv
 !data/content_features_full_catalog_rollup.csv
+# Larger/fresher watch sample (4,800 of a 5,000-user pull -- the last ~200
+# users are pending a PostHog outage) -- gives the full 775-title catalog
+# real evaluation coverage, unlike the 2,218-user sample above where most
+# titles are unseen. Used by src/pipeline_full_catalog.py and backend/app.py.
+!data/user_title_watch_sample_5000.csv
 _archive/
