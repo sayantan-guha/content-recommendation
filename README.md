@@ -64,6 +64,7 @@ The UI points at `http://localhost:8000` by default; override with the `HC_RECS_
 | [backend/app.py](backend/app.py) | FastAPI service: fits the model once at startup, serves `/users`, `/users/{uid}/history`, and `/users/{uid}/recommendations` as JSON |
 | [ui/app.py](ui/app.py) | Streamlit sample UI (hero banner + recommendation rail), styled with the hoichoi brand design system, backed entirely by the FastAPI service above |
 | [src/experiments/k_tuning_sweep.py](src/experiments/k_tuning_sweep.py) | Grid search over K_CONTENT/K_USER cluster counts against the held-out methodology; not wired into production, kept as a reference experiment |
+| [src/pipeline_item_cf.py](src/pipeline_item_cf.py) | Item-item collaborative filtering ("users who watched X also watched Y", cosine similarity over the binary watch matrix) — outperforms the cluster-based model by a wide margin; see Status below |
 
 ## Status
 
@@ -76,3 +77,17 @@ Core pipeline built and validated at scale (2,218 users), now at the series/seas
 **Watch sample scaled to the full 5,000 users** (`data/user_title_watch_sample_5000.csv`): `src/pipeline_full_catalog.py` and `backend/app.py` now read from this sample instead of the older 2,218-user one, giving the full 775-title catalog real evaluation coverage for the first time (752 distinct titles now have watch history, vs. 183 before). Held-out results on this sample: **17.6% Hit@10 / 27.3% Hit@20** for the model vs. **16.8% Hit@10 / 25.8% Hit@20** for a naive popularity baseline. The absolute numbers are much lower than the old 60.4%/73.7% -- that's expected, not a regression: the eligible candidate pool grew ~4x (183 → 752 titles) competing for the same fixed top-10/20 slots, which mechanically lowers any method's raw hit rate. What matters is the model's **lift over the popularity baseline**, which actually improved slightly (vs. roughly tied before) now that there's real signal to distinguish it from raw popularity.
 
 **K-tuning grid search at this scale** (`src/experiments/k_tuning_sweep.py`): swept 16 combinations of K_CONTENT (content-category clusters: 6/8/10/12) x K_USER (audience clusters: 4/6/8/10) against the same held-out methodology. Result: **no meaningful improvement over the current 8/6 setting** — all 16 combinations landed within 0.174-0.179 Hit@10, a band narrower than the ~0.6-point standard error on a proportion this size (n_eval=4,200). The "best" combo (K_CONTENT=12, K_USER=10, Hit@10=0.179) is statistically indistinguishable from production (8/6, Hit@10=0.177); cluster count isn't the current bottleneck.
+
+**Item-item collaborative filtering added** (`src/pipeline_item_cf.py`) — and it decisively outperforms the cluster-based model:
+
+| Model | Hit@10 | Hit@20 | Mean rank |
+|---|---|---|---|
+| Popularity baseline | 16.8% | 25.8% | 110.1 |
+| Cluster model (8 categories, 6 audience clusters, popularity^0.3 scoring) | 18.4% | 27.7% | 102.7 |
+| **Item-item CF** (cosine similarity over the binary watch matrix) | **29.6%** | **39.8%** | **72.7** |
+
+CF's lift over the popularity baseline (+12.8pp) is ~8x the cluster model's (+1.6pp). Root cause traced through the whole investigation: the 6 audience clusters concentrate 69% of users into just 2 "generic drama viewer" blobs whose item-popularity correlates 0.95+ with *global* popularity — so the cluster model's "personalized" score is barely distinct from popularity for most users. CF sidesteps this entirely by scoring every user against their own specific co-viewers rather than a cluster average. K-tuning, tag-density fixes, and audience-profile enrichment (recency/completion weighting, tested at 500-user scale) were all tried first and made no difference — the cluster *architecture* was the ceiling, not any of its tunable parameters.
+
+Refinements to CF were tested and rejected — weighting co-occurrence by seconds_watched (no change), shrinkage regularization (hurt), and blending in creator_boost or the cluster model's score (both hurt, diluting CF's sharper signal). Plain binary cosine similarity is the best variant found.
+
+**Known limitation:** CF only scores titles with enough co-occurrence data (same >=5-viewer floor used for evaluation) and users with >=1 watched eligible title — it needs the content-model and popularity baseline as fallback tiers for cold-start titles/users, not a full replacement. Not yet wired into `backend/app.py`/`ui/app.py`.
