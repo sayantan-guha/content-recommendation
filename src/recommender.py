@@ -149,32 +149,18 @@ COMPLETION_THRESHOLD = 0.6  # validated on a 500-user real-timestamp sample: +8.
 
 
 def load_audience_model(model):
-    watch_ep = pd.read_csv(f"{DATA}/user_title_watch_sample_5000.csv")
+    # Using the 1,100-user sample with real completion data as the sole watch
+    # source (not the older 5,000-user sample, which has no run-length data)
+    # so completion-rate filtering applies consistently to every user instead
+    # of only the subset the two samples happened to overlap on. The 5,000-
+    # user sample is stashed for now -- see README's Status section.
+    watch_ep = pd.read_csv(f"{DATA}/user_watch_completion_sample_1100.csv")
     watch_ep["item_id"] = watch_ep.content_id.apply(model["cid_to_item_id"])
     watch_ep = watch_ep.dropna(subset=["item_id"])
+    watch_ep["completion_pct"] = (watch_ep.seconds_watched / watch_ep.content_run_length_secs).clip(upper=2.0)
+    watch_ep = watch_ep[watch_ep.completion_pct >= COMPLETION_THRESHOLD]
     watch = watch_ep.groupby(["user_id", "item_id"], as_index=False)["seconds_watched"].sum()
     watch["item_idx"] = watch.item_id.map(model["item_to_idx"])
-
-    # Completion-rate filtering: for the subset of (user, content) pairs where
-    # we have real content_run_length_secs (currently 1,100 of 5,000 users --
-    # see .gitignore's note on user_watch_completion_sample_1100.csv), drop
-    # watches confirmed below COMPLETION_THRESHOLD from the CF similarity
-    # matrix -- a mostly-abandoned watch is weak signal that the user actually
-    # liked the title. Pairs with no completion data pass through unfiltered
-    # (absence of the signal, not evidence of low completion), so this only
-    # ever removes rows we're confident about, never silently drops coverage
-    # for users/titles outside the 1,100-user sample.
-    completion_path = Path(DATA) / "user_watch_completion_sample_1100.csv"
-    if completion_path.exists():
-        comp = pd.read_csv(completion_path)
-        comp["item_id"] = comp.content_id.apply(model["cid_to_item_id"])
-        comp = comp.dropna(subset=["item_id"])
-        comp["completion_pct"] = (comp.seconds_watched / comp.content_run_length_secs).clip(upper=2.0)
-        low_completion = set(zip(comp[comp.completion_pct < COMPLETION_THRESHOLD].user_id,
-                                  comp[comp.completion_pct < COMPLETION_THRESHOLD].item_id))
-        if low_completion:
-            drop_mask = watch.apply(lambda r: (r.user_id, r.item_id) in low_completion, axis=1)
-            watch = watch[~drop_mask].reset_index(drop=True)
 
     mixture = model["mixture"]
 

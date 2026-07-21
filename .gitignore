@@ -24,12 +24,16 @@ data/*
 # Larger/fresher watch sample (4,800 of a 5,000-user pull -- the last ~200
 # users are pending a PostHog outage) -- gives the full 775-title catalog
 # real evaluation coverage, unlike the 2,218-user sample above where most
-# titles are unseen. Used by src/pipeline_full_catalog.py and backend/app.py.
+# titles are unseen. STASHED as of the completion-rate switch below: kept in
+# the repo for a possible future re-expansion, but recommender.py no longer
+# reads it -- src/pipeline_full_catalog.py (a reference/history script, not
+# a production code path) still does.
 !data/user_title_watch_sample_5000.csv
-# Completion-rate data (content_run_length_secs + created_at) for 1,100 of the
-# 5,000 users, pulled from PostHog's cms_v_watch_history_with_content -- used
-# by recommender.py to drop confirmed-low-completion watches (<60% of runtime)
-# from the CF similarity matrix. Partial coverage by design: falls back to the
-# unfiltered watch relation for users/titles this sample doesn't cover.
+# Completion-rate data (content_run_length_secs + created_at), pulled from
+# PostHog's cms_v_watch_history_with_content. This is now recommender.py's
+# SOLE watch source (not the 5,000-user sample above) so the >=60%-completion
+# filter applies consistently to every user, not a partial overlay -- see
+# README's Status section for why that replaced the earlier partial-coverage
+# approach.
 !data/user_watch_completion_sample_1100.csv
 _archive/
