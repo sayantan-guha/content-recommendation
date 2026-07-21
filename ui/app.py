@@ -9,7 +9,9 @@ Run the backend first:  uvicorn backend.app:app --port 8000
 Then the UI:             streamlit run ui/app.py
 """
 import os
+from collections import Counter
 
+import matplotlib.pyplot as plt
 import requests
 import streamlit as st
 
@@ -142,7 +144,7 @@ def inject_css():
     st.markdown(css.replace("__GRADIENT__", HC_GRADIENT), unsafe_allow_html=True)
 
 
-def poster_card(title, subtitle, badge_type, rank=None, watched=False):
+def poster_card(title, subtitle, badge_type, rank=None, watched=False, cta_label="▶ Watch Now"):
     badge_label, badge_css = BADGE_STYLES.get(badge_type, BADGE_STYLES["movie"])
     rank_html = f'<div class="poster-rank">#{rank}</div>' if rank else ""
     watched_html = '<div class="poster-watched">✓ watched</div>' if watched else ""
@@ -154,19 +156,46 @@ def poster_card(title, subtitle, badge_type, rank=None, watched=False):
         f'<div class="poster-body">'
         f'<div class="poster-title">{title}</div>'
         f'<div class="poster-genre">{subtitle}</div>'
-        f'<span class="poster-cta">▶ Watch Now</span>'
+        f'<span class="poster-cta">{cta_label}</span>'
         f'</div>'
         f'</div>'
     )
 
 
-def render_rail(title, items):
+def render_rail(title, items, cta_label="▶ Watch Now"):
     st.markdown(f'<div class="rail-title">{title}</div>', unsafe_allow_html=True)
     cards = "".join(
-        poster_card(it["title"], it["subtitle"], it["badge_type"], it.get("rank"), it.get("watched", False))
+        poster_card(
+            it["title"], it["subtitle"], it["badge_type"],
+            it.get("rank"), it.get("watched", False), cta_label,
+        )
         for it in items
     )
     st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
+
+
+def render_type_composition_chart(history):
+    """Pie chart of movie vs series share in the viewer's watch history."""
+    counts = Counter(it["type"] for it in history)
+    labels = [t.title() for t in counts]
+    values = list(counts.values())
+    colors = ["#d20820", "#6d0550"]
+
+    fig, ax = plt.subplots(figsize=(3.4, 3.4))
+    fig.patch.set_alpha(0.0)
+    wedges, _, autotexts = ax.pie(
+        values,
+        labels=labels,
+        colors=colors[: len(values)],
+        autopct=lambda p: f"{p:.0f}%",
+        startangle=90,
+        wedgeprops={"edgecolor": "#fafafa", "linewidth": 2},
+        textprops={"fontfamily": "sans-serif", "fontsize": 10, "color": "#191919", "fontweight": "bold"},
+    )
+    for at in autotexts:
+        at.set_color("#ffffff")
+    ax.set_aspect("equal")
+    st.pyplot(fig, use_container_width=False)
 
 
 def main():
@@ -229,6 +258,24 @@ def main():
         for it in top10
     ]
     render_rail("Recommended For You", rec_items)
+
+    history = api_get(f"/users/{uid}/history")["history"]
+
+    rail_col, chart_col = st.columns([3, 1])
+    with rail_col:
+        history_items = [
+            {
+                "title": it["title"],
+                "subtitle": f"{it['type'].title()} • {it['genre']}",
+                "badge_type": it["type"],
+                "watched": True,
+            }
+            for it in history
+        ]
+        render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
+    with chart_col:
+        st.markdown('<div class="rail-title">Watch Mix</div>', unsafe_allow_html=True)
+        render_type_composition_chart(history)
 
 
 if __name__ == "__main__":
