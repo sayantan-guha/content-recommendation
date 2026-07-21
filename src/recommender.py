@@ -1,8 +1,32 @@
 """
-Shared recommendation-model logic: same model as src/pipeline_full_catalog.py
-(8 content-category clusters, 6 audience clusters, popularity^0.7 x cluster_rate^0.3
-x creator_boost scoring). Framework-agnostic -- used by backend/app.py (FastAPI)
-and importable anywhere else that needs the model without a UI dependency.
+Shared recommendation-model logic. Framework-agnostic -- used by backend/app.py
+(FastAPI) and importable anywhere else that needs the model without a UI
+dependency.
+
+Three-tier scoring, replacing the old single cluster-based scorer (retired --
+item-item CF strictly dominated it on every metric tested, see README/
+src/pipeline_item_cf.py):
+
+  1. Item-item CF (primary) -- for users with >=1 watched eligible title,
+     score candidates by summed cosine-similarity to everything they've
+     watched. This is src/pipeline_item_cf.py's validated approach, wired
+     in here instead of just benchmarked standalone.
+  2. Content-similarity cold-start fallback -- titles with <5 viewers have no
+     CF co-occurrence signal regardless of which user is asking, so they're
+     scored by cosine similarity to the user's content-tag profile instead
+     (see cold_start_candidates below). Reserves ~10% of every slate.
+  3. Popularity fallback -- for users with 0 watched eligible titles, CF has
+     nothing to sum similarities over, so candidates are just ranked by raw
+     popularity.
+
+Deliberately NOT blended together (tested and rejected -- see
+src/pipeline_item_cf.py's docstring: mixing in creator_boost or a
+cluster/popularity score diluted CF's sharper signal). Each tier only
+activates when the one above it has nothing to work with.
+
+The movie/series type-affinity quota (apply_type_quota) is a final reordering
+pass on top of whichever tier produced the ranked list -- agnostic to scoring
+method.
 """
 import ast
 from collections import Counter
@@ -10,12 +34,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 
 DATA = str(Path(__file__).resolve().parent.parent / "data")
-K_CONTENT, K_USER = 8, 6
-DIR_W, ACTOR_W = 0.5, 0.5
+K_CONTENT = 8
 
 
 def parse_list(s):
@@ -136,18 +159,6 @@ def load_audience_model(model):
         w = secs / secs.sum()
         return (mixture[idxs] * w[:, None]).sum(axis=0)
 
-    profiles = {}
-    for uid, rows_ in watch.groupby("user_id"):
-        profiles[uid] = build_profile(rows_.item_idx.values, rows_.seconds_watched.values)
-    all_uids = list(profiles.keys())
-    P = np.array([profiles[u] for u in all_uids])
-    scaler = StandardScaler().fit(P)
-    Ps = scaler.transform(P)
-    km_user = KMeans(n_clusters=K_USER, random_state=42, n_init=10).fit(Ps)
-    uid_to_cluster = dict(zip(all_uids, km_user.labels_))
-    watch_c = watch.copy()
-    watch_c["cluster"] = watch_c.user_id.map(uid_to_cluster)
-
     item_viewer_counts = watch.groupby("item_idx").user_id.nunique()
     eligible_idx = set(item_viewer_counts[item_viewer_counts >= 5].index)
     overall_pop = watch.groupby("item_idx").user_id.nunique()
@@ -155,11 +166,23 @@ def load_audience_model(model):
     user_counts = watch.groupby("user_id").size()
     eval_users = sorted(user_counts[user_counts >= 4].index.tolist())
 
+    # item-item cosine-similarity matrix (binary co-occurrence), built once --
+    # same construction as src/pipeline_item_cf.py
+    all_uids = sorted(watch.user_id.unique())
+    uid_to_row = {u: i for i, u in enumerate(all_uids)}
+    n_items = len(mixture)
+    rows_idx = watch.user_id.map(uid_to_row).values
+    cols_idx = watch.item_idx.values
+    ui = csr_matrix((np.ones(len(watch)), (rows_idx, cols_idx)), shape=(len(all_uids), n_items))
+    ii = (ui.T @ ui).toarray()
+    item_norm = np.sqrt(np.array(ui.multiply(ui).sum(axis=0)).flatten())
+    item_norm[item_norm == 0] = 1.0
+    sim = ii / (item_norm[:, None] * item_norm[None, :])
+    np.fill_diagonal(sim, 0.0)
+
     return {
         "watch": watch,
-        "watch_c": watch_c,
-        "scaler": scaler,
-        "km_user": km_user,
+        "sim": sim,
         "eligible_idx": eligible_idx,
         "overall_pop": overall_pop,
         "eval_users": eval_users,
@@ -238,41 +261,28 @@ def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n):
 
 def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     watch = audience["watch"]
-    watch_c = audience["watch_c"]
-    scaler = audience["scaler"]
-    km_user = audience["km_user"]
+    sim = audience["sim"]
     eligible_idx = audience["eligible_idx"]
     overall_pop = audience["overall_pop"]
     build_profile = audience["build_profile"]
-    director_sets = model["director_sets"]
-    actor_sets = model["actor_sets"]
 
     user_rows = watch[watch.user_id == uid]
     remaining = user_rows[user_rows.item_idx != held_out_idx] if held_out_idx is not None else user_rows
     profile = build_profile(remaining.item_idx.values, remaining.seconds_watched.values)
-    profile_s = scaler.transform(profile.reshape(1, -1))
-    d = np.linalg.norm(km_user.cluster_centers_ - profile_s, axis=1)
-    assigned_cluster = int(np.argmin(d))
-
-    mask_drop = (watch_c.user_id == uid) & (watch_c.item_idx == held_out_idx)
-    wc = watch_c[~mask_drop] if held_out_idx is not None else watch_c
-    cl_viewers = wc[wc.cluster == assigned_cluster].groupby("item_idx").user_id.nunique()
-    cl_size = wc[wc.cluster == assigned_cluster].user_id.nunique()
 
     watched = set(user_rows.item_idx) - ({held_out_idx} if held_out_idx is not None else set())
     candidates = [i for i in eligible_idx if i not in watched]
-    cl_rate = (cl_viewers.reindex(candidates, fill_value=0) + 0.5) / (cl_size + 1.0)
-    n_loo = wc.user_id.nunique()
-    pop_rate = (overall_pop.reindex(candidates, fill_value=0) + 0.5) / (n_loo + 1.0)
 
-    user_dirs = set().union(*(director_sets[i] for i in remaining.item_idx.values)) if len(remaining) else set()
-    user_actors = set().union(*(actor_sets[i] for i in remaining.item_idx.values)) if len(remaining) else set()
-
-    score = {}
-    for c in candidates:
-        boost = 1.0 + DIR_W * len(director_sets[c] & user_dirs) + ACTOR_W * len(actor_sets[c] & user_actors)
-        score[c] = (pop_rate.get(c, 0.0) ** 0.7) * (cl_rate.get(c, 0.0) ** 0.3) * boost
-    ranked = sorted(score, key=lambda k: score[k], reverse=True)
+    if len(remaining) == 0:
+        # Tier 3: no watch history to score CF against -- fall back to popularity.
+        pop = overall_pop.reindex(candidates, fill_value=0)
+        ranked = pop.sort_values(ascending=False).index.tolist()
+    else:
+        # Tier 1: item-item CF -- sum similarity to everything the user has watched.
+        cand_arr = np.array(candidates)
+        scores = sim[remaining.item_idx.values][:, cand_arr].sum(axis=0)
+        order = np.argsort(-scores)
+        ranked = cand_arr[order].tolist()
 
     content_type_arr = model["content_type_arr"]
     type_counts = Counter(content_type_arr[i] for i in remaining.item_idx.values)
