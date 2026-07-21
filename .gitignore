@@ -26,4 +26,10 @@ data/*
 # real evaluation coverage, unlike the 2,218-user sample above where most
 # titles are unseen. Used by src/pipeline_full_catalog.py and backend/app.py.
 !data/user_title_watch_sample_5000.csv
+# Completion-rate data (content_run_length_secs + created_at) for 1,100 of the
+# 5,000 users, pulled from PostHog's cms_v_watch_history_with_content -- used
+# by recommender.py to drop confirmed-low-completion watches (<60% of runtime)
+# from the CF similarity matrix. Partial coverage by design: falls back to the
+# unfiltered watch relation for users/titles this sample doesn't cover.
+!data/user_watch_completion_sample_1100.csv
 _archive/
