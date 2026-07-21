@@ -8,8 +8,10 @@ recommendations for a picked viewer -- no model internals shown.
 Run the backend first:  uvicorn backend.app:app --port 8000
 Then the UI:             streamlit run ui/app.py
 """
+import base64
 import os
 from collections import Counter
+from io import BytesIO
 
 import matplotlib.pyplot as plt
 import requests
@@ -79,9 +81,14 @@ def inject_css():
         }
         .viewer-picker label { display:none; }
         .hero {
-            border-radius: 24px; padding: 2.4rem; margin-bottom: 1.8rem;
+            border-radius: 24px; padding: 2.4rem; margin-bottom: 1.8rem; box-sizing:border-box;
+            min-height: 320px;
             background: __GRADIENT__;
             position: relative; overflow: hidden; box-shadow: 0 8px 32px rgba(210,8,32,0.2);
+        }
+        .watch-mix-wrap {
+            display:flex; flex-direction:column; justify-content:center; align-items:center;
+            gap: 1rem; min-height: 320px; margin-bottom: 1.8rem;
         }
         .hero::after {
             content:""; position:absolute; top:-60px; right:-60px; width:220px; height:220px;
@@ -139,6 +146,7 @@ def inject_css():
         .verdict-close { background:#fff9ec; border:1px solid var(--hc-warning); color:#8a6300; padding:0.8rem 1.1rem; border-radius:14px; font-weight:600; font-family:'Manrope',sans-serif;}
         .verdict-miss { background:#fff5f5; border:1px solid var(--hc-red); color:#a3051d; padding:0.8rem 1.1rem; border-radius:14px; font-weight:600; font-family:'Manrope',sans-serif;}
         .api-status { font-family:'Manrope',sans-serif; font-size:0.7rem; color:#999; margin-bottom:0.6rem; }
+        div[data-testid="stImage"] { display:flex; justify-content:center; }
         </style>
         """
     st.markdown(css.replace("__GRADIENT__", HC_GRADIENT), unsafe_allow_html=True)
@@ -174,14 +182,17 @@ def render_rail(title, items, cta_label="▶ Watch Now"):
     st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
 
 
-def render_type_composition_chart(history):
-    """Pie chart of movie vs series share in the viewer's watch history."""
+def type_composition_chart_b64(history):
+    """Donut chart of movie vs series share, as a base64 PNG (so it can be
+    embedded in a flex wrapper for precise alignment against the hero card)."""
     counts = Counter(it["type"] for it in history)
     labels = [t.title() for t in counts]
     values = list(counts.values())
-    colors = ["#d20820", "#6d0550"]
+    # soft pastel takes on the brand red/velvet hues
+    colors = ["#f6a6b2", "#c9a7e0"]
+    total = sum(values)
 
-    fig, ax = plt.subplots(figsize=(3.4, 3.4))
+    fig, ax = plt.subplots(figsize=(2.6, 2.6))
     fig.patch.set_alpha(0.0)
     wedges, _, autotexts = ax.pie(
         values,
@@ -189,13 +200,28 @@ def render_type_composition_chart(history):
         colors=colors[: len(values)],
         autopct=lambda p: f"{p:.0f}%",
         startangle=90,
-        wedgeprops={"edgecolor": "#fafafa", "linewidth": 2},
-        textprops={"fontfamily": "sans-serif", "fontsize": 10, "color": "#191919", "fontweight": "bold"},
+        pctdistance=0.72,
+        labeldistance=1.14,
+        wedgeprops={"width": 0.42, "edgecolor": "#fafafa", "linewidth": 1.2},
+        textprops={"fontfamily": "sans-serif", "fontsize": 8.5, "color": "#5b4a52", "fontweight": "600"},
     )
     for at in autotexts:
-        at.set_color("#ffffff")
+        at.set_color("#4a3b42")
+        at.set_fontweight("bold")
+        at.set_fontsize(8.5)
+
+    # center label: total titles watched
+    ax.text(0, 0.10, f"{total}", ha="center", va="center",
+            fontsize=14, fontweight="bold", color="#4a3b42", fontfamily="sans-serif")
+    ax.text(0, -0.16, "titles", ha="center", va="center",
+            fontsize=7, color="#9c8d94", fontfamily="sans-serif")
+
     ax.set_aspect("equal")
-    st.pyplot(fig, use_container_width=False)
+    buf = BytesIO()
+    fig.savefig(buf, format="png", transparent=True, bbox_inches="tight", pad_inches=0.05, dpi=200)
+    plt.close(fig)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return f'<img src="data:image/png;base64,{b64}" style="width:300px; display:block; margin:0 auto;">'
 
 
 def main():
@@ -232,22 +258,36 @@ def main():
 
     rec_resp = api_get(f"/users/{uid}/recommendations", top_n=10)
     top10 = rec_resp["recommendations"]
+    history = api_get(f"/users/{uid}/history")["history"]
 
-    # Hero: the user's own top recommendation.
+    # Hero: the user's own top recommendation, with the watch-mix donut alongside it.
     hero = top10[0]
-    st.markdown(
-        f"""
-        <div class="hero">
-            <div class="hero-inner">
-                <div class="hero-eyebrow">Top pick for this viewer</div>
-                <div class="hero-title">{hero['title']}</div>
-                <div class="hero-meta">{hero['type'].title()} • {hero['genre']}</div>
-                <span class="hero-btn">▶ Watch Now</span>
+    hero_col, chart_col = st.columns([2.4, 1])
+    with hero_col:
+        st.markdown(
+            f"""
+            <div class="hero">
+                <div class="hero-inner">
+                    <div class="hero-eyebrow">Top pick for this viewer</div>
+                    <div class="hero-title">{hero['title']}</div>
+                    <div class="hero-meta">{hero['type'].title()} • {hero['genre']}</div>
+                    <span class="hero-btn">▶ Watch Now</span>
+                </div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
+    with chart_col:
+        chart_img = type_composition_chart_b64(history)
+        st.markdown(
+            f"""
+            <div class="watch-mix-wrap">
+                <div class="rail-title" style="justify-content:center; margin:0;">Watch Mix</div>
+                {chart_img}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     rec_items = [
         {
@@ -259,23 +299,16 @@ def main():
     ]
     render_rail("Recommended For You", rec_items)
 
-    history = api_get(f"/users/{uid}/history")["history"]
-
-    rail_col, chart_col = st.columns([3, 1])
-    with rail_col:
-        history_items = [
-            {
-                "title": it["title"],
-                "subtitle": f"{it['type'].title()} • {it['genre']}",
-                "badge_type": it["type"],
-                "watched": True,
-            }
-            for it in history
-        ]
-        render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
-    with chart_col:
-        st.markdown('<div class="rail-title">Watch Mix</div>', unsafe_allow_html=True)
-        render_type_composition_chart(history)
+    history_items = [
+        {
+            "title": it["title"],
+            "subtitle": f"{it['type'].title()} • {it['genre']}",
+            "badge_type": it["type"],
+            "watched": True,
+        }
+        for it in history
+    ]
+    render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
 
 
 if __name__ == "__main__":
