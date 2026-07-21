@@ -39,7 +39,7 @@ HC_GRADIENT = "linear-gradient(-60deg,#d20820 0%,#6d0550 100%)"
 # SERIES -> #191919/#fff, FILM -> #f5f5f5/#2a2a2a.
 BADGE_STYLES = {
     "series": ("SERIES", "background:#191919;color:#fff;"),
-    "movie": ("FILM", "background:#f5f5f5;color:#2a2a2a;"),
+    "movie": ("MOVIE", "background:#f5f5f5;color:#2a2a2a;"),
 }
 
 
