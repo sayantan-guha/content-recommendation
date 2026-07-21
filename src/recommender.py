@@ -212,6 +212,30 @@ def apply_type_quota(ranked, content_type_arr, type_counts, top_n):
     return [idx for idx in ranked if idx in slate_set][:top_n]
 
 
+COLD_START_QUOTA_FRACTION = 0.1  # fraction of top_n reserved for cold-start (low-data) titles
+
+
+def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n):
+    """Rank titles with too little watch data to trust CF/cluster signal (below
+    the eligibility threshold) by content-tag similarity to the user's taste
+    profile, instead of excluding them entirely. Lets brand-new/low-viewership
+    titles surface without waiting for CF/popularity signal to accumulate.
+    """
+    if n <= 0:
+        return []
+    mixture = model["mixture"]
+    cold_pool = [i for i in range(len(mixture)) if i not in eligible_idx and i not in watched]
+    if not cold_pool:
+        return []
+    profile_norm = np.linalg.norm(mixture_profile) or 1.0
+    item_vecs = mixture[cold_pool]
+    item_norms = np.linalg.norm(item_vecs, axis=1)
+    item_norms[item_norms == 0] = 1.0
+    sims = (item_vecs @ mixture_profile) / (item_norms * profile_norm)
+    order = np.argsort(-sims)
+    return [cold_pool[i] for i in order[:n]]
+
+
 def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     watch = audience["watch"]
     watch_c = audience["watch_c"]
@@ -252,5 +276,10 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
 
     content_type_arr = model["content_type_arr"]
     type_counts = Counter(content_type_arr[i] for i in remaining.item_idx.values)
-    top = apply_type_quota(ranked, content_type_arr, type_counts, top_n)
+
+    cold_n = max(1, round(top_n * COLD_START_QUOTA_FRACTION)) if (top_n >= 5 and COLD_START_QUOTA_FRACTION > 0) else 0
+    warm_n = top_n - cold_n
+    top_warm = apply_type_quota(ranked, content_type_arr, type_counts, warm_n)
+    top_cold = cold_start_candidates(model, profile, eligible_idx, watched, cold_n)
+    top = top_warm + top_cold
     return top, ranked
