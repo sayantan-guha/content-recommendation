@@ -126,7 +126,7 @@ def cid_to_item_id(cid):
     return None  # untagged/unlinked -- drop
 
 # ---------- fit on the 2218-user training set ----------
-watch_ep = pd.read_csv(f'{DATA}/user_title_watch_sample_2218.csv')
+watch_ep = pd.read_csv(f'{DATA}/user_title_watch_sample_5000.csv')
 watch_ep['item_id'] = watch_ep.content_id.apply(cid_to_item_id)
 watch_ep = watch_ep.dropna(subset=['item_id'])
 watch = watch_ep.groupby(['user_id', 'item_id'], as_index=False)['seconds_watched'].sum()
