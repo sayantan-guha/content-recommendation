@@ -5,6 +5,7 @@ x creator_boost scoring). Framework-agnostic -- used by backend/app.py (FastAPI)
 and importable anywhere else that needs the model without a UI dependency.
 """
 import ast
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -117,6 +118,7 @@ def load_content_model():
         "director_sets": director_sets,
         "actor_sets": actor_sets,
         "cid_to_item_id": cid_to_item_id,
+        "content_type_arr": series_content["content_type"].values,
     }
 
 
@@ -165,6 +167,51 @@ def load_audience_model(model):
     }
 
 
+def apply_type_quota(ranked, content_type_arr, type_counts, top_n):
+    """Reorder `ranked` so the top_n slate matches the user's movie/series
+    watch-history proportions, instead of taking a flat top-N cut.
+
+    type_counts: e.g. {"movie": 7, "series": 3} from the user's watch history.
+    Falls back to a plain top-N cut if the user has no typed history yet.
+    """
+    total = sum(type_counts.values())
+    if total == 0:
+        return ranked[:top_n]
+
+    quotas = {t: (top_n * c) / total for t, c in type_counts.items()}
+    floor_quotas = {t: int(q) for t, q in quotas.items()}
+    remainder = top_n - sum(floor_quotas.values())
+    # give leftover slots to the types with the largest fractional remainder
+    fracs = sorted(quotas, key=lambda t: quotas[t] - floor_quotas[t], reverse=True)
+    for t in fracs[:remainder]:
+        floor_quotas[t] += 1
+
+    buckets = {t: [] for t in type_counts}
+    for idx in ranked:
+        t = content_type_arr[idx]
+        if t in buckets:
+            buckets[t].append(idx)
+
+    slate = []
+    for t, q in floor_quotas.items():
+        slate.extend(buckets.get(t, [])[:q])
+    filled = set(slate)
+
+    # if a type ran short of eligible candidates, backfill from the overall
+    # ranked order (regardless of type) so the slate still reaches top_n
+    if len(slate) < top_n:
+        for idx in ranked:
+            if idx not in filled:
+                slate.append(idx)
+                filled.add(idx)
+            if len(slate) >= top_n:
+                break
+
+    # restore original relevance order within the quota-filled slate
+    slate_set = set(slate)
+    return [idx for idx in ranked if idx in slate_set][:top_n]
+
+
 def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     watch = audience["watch"]
     watch_c = audience["watch_c"]
@@ -202,4 +249,8 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
         boost = 1.0 + DIR_W * len(director_sets[c] & user_dirs) + ACTOR_W * len(actor_sets[c] & user_actors)
         score[c] = (pop_rate.get(c, 0.0) ** 0.7) * (cl_rate.get(c, 0.0) ** 0.3) * boost
     ranked = sorted(score, key=lambda k: score[k], reverse=True)
-    return ranked[:top_n], ranked
+
+    content_type_arr = model["content_type_arr"]
+    type_counts = Counter(content_type_arr[i] for i in remaining.item_idx.values)
+    top = apply_type_quota(ranked, content_type_arr, type_counts, top_n)
+    return top, ranked

@@ -256,12 +256,12 @@ def main():
 
     st.markdown('<hr style="border-color:#e8e8e8; margin: 0.6rem 0 1.4rem;">', unsafe_allow_html=True)
 
-    rec_resp = api_get(f"/users/{uid}/recommendations", top_n=10)
-    top10 = rec_resp["recommendations"]
+    rec_resp = api_get(f"/users/{uid}/recommendations", top_n=20)
+    top20 = rec_resp["recommendations"]
     history = api_get(f"/users/{uid}/history")["history"]
 
     # Hero: the user's own top recommendation, with the watch-mix donut alongside it.
-    hero = top10[0]
+    hero = top20[0]
     hero_col, chart_col = st.columns([2.4, 1])
     with hero_col:
         st.markdown(
@@ -295,7 +295,7 @@ def main():
             "subtitle": f"{it['type'].title()} • {it['genre']}",
             "badge_type": it["type"],
         }
-        for it in top10
+        for it in top20
     ]
     render_rail("Recommended For You", rec_items)
 
