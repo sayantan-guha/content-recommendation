@@ -260,20 +260,19 @@ COLD_START_DIR_W = 0.3
 COLD_START_ACTOR_W = 0.3
 
 
-def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
-    """Rank titles with too little watch data to trust CF/cluster signal (below
-    the eligibility threshold) by content-tag similarity to the user's taste
-    profile, instead of excluding them entirely. Lets brand-new/low-viewership
-    titles surface without waiting for CF/popularity signal to accumulate.
-    Boosted by director/actor overlap with watched_idx when provided.
+def content_based_ranking(model, mixture_profile, candidates, watched_idx=None):
+    """Rank an arbitrary candidate pool by content-tag cosine similarity to the
+    user's taste profile, boosted by director/actor overlap with watched_idx
+    when provided. This is the shared scorer behind both the cold-start
+    fallback (candidates = titles with too little CF data) and the low-
+    signal edge cases in recommend_for_user (candidates = the same eligible
+    pool CF would have used, when CF itself has nothing trustworthy to say).
+    Returns (candidate_array, similarity_scores), NOT truncated to top-N.
     """
-    if n <= 0:
-        return []
+    cand_arr = np.array(candidates)
+    if len(cand_arr) == 0:
+        return cand_arr, np.array([])
     mixture = model["mixture"]
-    cold_pool = [i for i in range(len(mixture)) if i not in eligible_idx and i not in watched]
-    if not cold_pool:
-        return []
-    cand_arr = np.array(cold_pool)
     profile_norm = np.linalg.norm(mixture_profile) or 1.0
     item_vecs = mixture[cand_arr]
     item_norms = np.linalg.norm(item_vecs, axis=1)
@@ -292,8 +291,35 @@ def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watc
         ])
         sims = sims * boost
 
+    return cand_arr, sims
+
+
+def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
+    """Rank titles with too little watch data to trust CF/cluster signal (below
+    the eligibility threshold) by content-tag similarity to the user's taste
+    profile, instead of excluding them entirely. Lets brand-new/low-viewership
+    titles surface without waiting for CF/popularity signal to accumulate.
+    """
+    if n <= 0:
+        return []
+    mixture = model["mixture"]
+    cold_pool = [i for i in range(len(mixture)) if i not in eligible_idx and i not in watched]
+    if not cold_pool:
+        return []
+    cand_arr, sims = content_based_ranking(model, mixture_profile, cold_pool, watched_idx)
     order = np.argsort(-sims)
     return cand_arr[order[:n]].tolist()
+
+
+# Edge case: below this many watched titles, CF's co-occurrence sum is too thin
+# to trust (often just 1-2 items) -- rank by content-similarity instead of CF.
+MIN_WATCHED_FOR_CF = 3
+
+# Edge case: CF technically ran (user has >=MIN_WATCHED_FOR_CF watches) but
+# found literally no co-viewers for anything they watched -- every candidate
+# scores exactly 0, so argsort's result is arbitrary tie-broken noise, not a
+# real ranking. Below this we treat CF as having produced no usable signal.
+CF_SIGNAL_EPSILON = 1e-9
 
 
 def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
@@ -305,28 +331,66 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
 
     user_rows = watch[watch.user_id == uid]
     remaining = user_rows[user_rows.item_idx != held_out_idx] if held_out_idx is not None else user_rows
-    profile = build_profile(remaining.item_idx.values, remaining.seconds_watched.values)
+    watched_idx = remaining.item_idx.values
 
     watched = set(user_rows.item_idx) - ({held_out_idx} if held_out_idx is not None else set())
     candidates = [i for i in eligible_idx if i not in watched]
 
     if len(remaining) == 0:
-        # Tier 3: no watch history to score CF against -- fall back to popularity.
+        # Edge case: zero watch history at all -- no profile to build, no CF,
+        # no content-similarity possible either. Fall back to popularity.
+        profile = None
         pop = overall_pop.reindex(candidates, fill_value=0)
         ranked = pop.sort_values(ascending=False).index.tolist()
     else:
-        # Tier 1: item-item CF -- sum similarity to everything the user has watched.
+        profile = build_profile(watched_idx, remaining.seconds_watched.values)
         cand_arr = np.array(candidates)
-        scores = sim[remaining.item_idx.values][:, cand_arr].sum(axis=0)
-        order = np.argsort(-scores)
-        ranked = cand_arr[order].tolist()
+
+        if len(remaining) < MIN_WATCHED_FOR_CF:
+            # Edge case: watch history too low to trust CF's co-occurrence sum
+            # (often just 1-2 titles) -- rank by content-similarity instead.
+            _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
+            order = np.argsort(-sims)
+            ranked = cand_arr[order].tolist()
+        else:
+            scores = sim[watched_idx][:, cand_arr].sum(axis=0)
+            if len(scores) == 0 or scores.max() <= CF_SIGNAL_EPSILON:
+                # Edge case: "no similar users found" -- none of this user's
+                # watched titles have any real co-viewers among eligible
+                # candidates, so CF's ranking would be tie-broken noise, not
+                # a real signal. Rank by content-similarity instead.
+                _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
+                order = np.argsort(-sims)
+                ranked = cand_arr[order].tolist()
+            else:
+                order = np.argsort(-scores)
+                ranked = cand_arr[order].tolist()
 
     content_type_arr = model["content_type_arr"]
-    type_counts = Counter(content_type_arr[i] for i in remaining.item_idx.values)
+    type_counts = Counter(content_type_arr[i] for i in watched_idx) if len(remaining) else Counter()
 
     cold_n = max(1, round(top_n * COLD_START_QUOTA_FRACTION)) if (top_n >= 5 and COLD_START_QUOTA_FRACTION > 0) else 0
     warm_n = top_n - cold_n
     top_warm = apply_type_quota(ranked, content_type_arr, type_counts, warm_n)
-    top_cold = cold_start_candidates(model, profile, eligible_idx, watched, cold_n, watched_idx=remaining.item_idx.values)
+    top_cold = cold_start_candidates(model, profile, eligible_idx, watched, cold_n, watched_idx=watched_idx) if profile is not None else []
     top = top_warm + top_cold
+
+    # Edge case: candidate pools ran dry (e.g. a power user has watched nearly
+    # every eligible title, or the cold pool is empty) and the slate came up
+    # short of top_n. Backfill from the full unwatched catalog by content-
+    # similarity (or popularity, if there's no profile at all) rather than
+    # silently returning fewer than top_n recommendations.
+    if len(top) < top_n:
+        filled = set(top) | watched
+        remaining_pool = [i for i in range(len(model["mixture"])) if i not in filled]
+        if remaining_pool:
+            if profile is not None:
+                cand_arr, sims = content_based_ranking(model, profile, remaining_pool, watched_idx)
+                order = np.argsort(-sims)
+                backfill = cand_arr[order].tolist()
+            else:
+                pop = overall_pop.reindex(remaining_pool, fill_value=0)
+                backfill = pop.sort_values(ascending=False).index.tolist()
+            top = top + backfill[: top_n - len(top)]
+
     return top, ranked
