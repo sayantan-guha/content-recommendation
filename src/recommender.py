@@ -247,12 +247,25 @@ def apply_type_quota(ranked, content_type_arr, type_counts, top_n):
 
 COLD_START_QUOTA_FRACTION = 0.1  # fraction of top_n reserved for cold-start (low-data) titles
 
+# Creator (director/actor) overlap boost, cold-start fallback ONLY -- tested and
+# REJECTED for the primary CF scorer (dilutes CF's already-sharp similarity
+# signal, monotonically worse the stronger it's applied), but roughly DOUBLES
+# the cold-start fallback's own Hit@10/20 in isolation (Hit@10 3.5% -> 7.7%,
+# Hit@20 7.1% -> 13.0% at this strength): the fallback's pure content-tag
+# similarity is comparatively weak/generic on its own (many mainstream titles
+# saturate near cosine-similarity 1.0 after the K=8 mixture compression), so a
+# real discriminating signal like shared cast/crew gives it something concrete
+# to lean on where CF has no data at all. See README's Status section.
+COLD_START_DIR_W = 0.3
+COLD_START_ACTOR_W = 0.3
 
-def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n):
+
+def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
     """Rank titles with too little watch data to trust CF/cluster signal (below
     the eligibility threshold) by content-tag similarity to the user's taste
     profile, instead of excluding them entirely. Lets brand-new/low-viewership
     titles surface without waiting for CF/popularity signal to accumulate.
+    Boosted by director/actor overlap with watched_idx when provided.
     """
     if n <= 0:
         return []
@@ -260,13 +273,27 @@ def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n):
     cold_pool = [i for i in range(len(mixture)) if i not in eligible_idx and i not in watched]
     if not cold_pool:
         return []
+    cand_arr = np.array(cold_pool)
     profile_norm = np.linalg.norm(mixture_profile) or 1.0
-    item_vecs = mixture[cold_pool]
+    item_vecs = mixture[cand_arr]
     item_norms = np.linalg.norm(item_vecs, axis=1)
     item_norms[item_norms == 0] = 1.0
     sims = (item_vecs @ mixture_profile) / (item_norms * profile_norm)
+
+    if watched_idx is not None and len(watched_idx) > 0:
+        director_sets = model["director_sets"]
+        actor_sets = model["actor_sets"]
+        user_dirs = set().union(*(director_sets[i] for i in watched_idx))
+        user_actors = set().union(*(actor_sets[i] for i in watched_idx))
+        boost = np.array([
+            1.0 + COLD_START_DIR_W * len(director_sets[c] & user_dirs)
+            + COLD_START_ACTOR_W * len(actor_sets[c] & user_actors)
+            for c in cand_arr
+        ])
+        sims = sims * boost
+
     order = np.argsort(-sims)
-    return [cold_pool[i] for i in order[:n]]
+    return cand_arr[order[:n]].tolist()
 
 
 def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
@@ -300,6 +327,6 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     cold_n = max(1, round(top_n * COLD_START_QUOTA_FRACTION)) if (top_n >= 5 and COLD_START_QUOTA_FRACTION > 0) else 0
     warm_n = top_n - cold_n
     top_warm = apply_type_quota(ranked, content_type_arr, type_counts, warm_n)
-    top_cold = cold_start_candidates(model, profile, eligible_idx, watched, cold_n)
+    top_cold = cold_start_candidates(model, profile, eligible_idx, watched, cold_n, watched_idx=remaining.item_idx.values)
     top = top_warm + top_cold
     return top, ranked
