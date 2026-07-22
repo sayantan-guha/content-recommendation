@@ -4,6 +4,8 @@
 
 This doc is the single reference for **what data was pulled, what new fields were engineered, and which techniques were used at each stage.** Each section leads with a plain-English summary, then the technical detail. For narrative context and results, see [APPROACH.md](APPROACH.md), [CATEGORIES.md](CATEGORIES.md), and [AUDIENCE_CLUSTERS.md](AUDIENCE_CLUSTERS.md).
 
+> **⚠️ Read this first — what's below vs. what's live now.** Everything in this doc up through Section 3.11 describes the *original* cluster-based model (audience clustering, `pop_rate^0.7 × cluster_rate^0.3 × creator_boost` scoring) and the journey to validate it. That model has since been **retired from production**, replaced by item-item collaborative filtering (strictly better on every held-out metric — see [README.md](../README.md)'s Status section for the numbers). Current production (`src/recommender.py`) is a three-tier scorer: **item-item CF** (primary, for any user with watch history) → **content-similarity cold-start fallback** (titles with too little co-occurrence data, using the same Programming Category vectors from Section 3 below) → **popularity fallback** (zero-history users). On top of that: a **movie/series type-affinity quota** reorders each slate to match the user's own type mix, and **completion-rate filtering** (≥60% of runtime, watched via real `content_run_length_secs` + `created_at` pulled through PostHog — see the new Section 1 row below) drops confirmed-low-completion watches from the CF matrix before anything else runs. Production now trains on a **1,100-user sample with real completion data** (`data/user_watch_completion_sample_1100.csv`), not the 2,218-user or 5,000-user samples described below — those are stashed, not deleted. Evaluation now also reports **NDCG@10/20 and MRR** alongside Hit@10/20 and mean rank, and is segmented by *what's being tested* (warm-item recovery vs. cold-start exposure) rather than one blended number. Several plausible-sounding extensions were tested and rejected: watch-history recency in three different forms, and session-intent re-ranking boosts — all either null or actively harmful; see README's Status section for the numbers on each.
+
 ---
 
 ## 1. Data fetched — where it came from
@@ -19,6 +21,7 @@ This doc is the single reference for **what data was pulled, what new fields wer
 | `cms_v_people_latest` | same | Person records (name, role) joined against the `person_id` arrays to resolve actual director/actor/producer names |
 | `cms_v_watch_history_with_content` | same | Raw per-user, per-title watch events (`user_id`, `content_id`, `seconds_watched`) — this is the largest table (millions of rows); every pull was scoped to specific `content_id`s and/or `user_id`s |
 | `Queens.docx` (official creative brief) + 7 episode script PDFs | Local filesystem, read directly | Used once, for a single title, to validate the tagging approach against richer source text and a business-curated "Similar Shows" ground truth |
+| `cms_v_watch_history_with_content` (added later) | PostHog HogQL, `GROUP BY user_id, content_id, content_type` to collapse the fan-out dupe before it even leaves ClickHouse | `content_run_length_secs` (title runtime) + `created_at` (genuine watch-event timestamp, confirmed distinct from the `_id`-embedded migration/insert timestamp) — pulled for 1,100 users to compute `completion_pct = seconds_watched / content_run_length_secs` and power the ≥60%-completion filter now used in production. `created_at` was also tested for recency-weighting (rejected, see README) |
 
 **Scale actually pulled**, in the order it grew across this project:
 
@@ -124,6 +127,26 @@ Always benchmarked against a **naive popularity baseline** (rank by raw view cou
 ---
 
 ## Where each technique lives in the pipeline (quick map)
+
+**Current production** (`src/recommender.py`, see [README.md](../README.md) for full numbers):
+
+```
+Raw CMS + watch-history data (PostHog HogQL pulls)
+        ↓ [content_run_length_secs + created_at → completion_pct, ≥60% filter]
+Completion-filtered watch data (1,100-user sample)
+        ↓ [weighted multi-hot vectors → K-means k=8 → softmax mixture]  → Section 3.2–3.4 (still used, for cold-start fallback only)
+8 Programming Categories (soft %, per title) ─────────────┐
+        ↓ [binary co-occurrence → cosine similarity]       │ (content-similarity
+Item-item CF similarity matrix                             │  fallback for titles
+        ↓ [sum similarity to everything a user watched]    │  with <5 viewers)
+CF-ranked candidates ←──────────────────────────────────────┘
+        ↓ [zero-history users only: rank by raw popularity instead]
+        ↓ [movie/series type-affinity quota reorders the slate]
+Final recommendations per user
+        ↓ [held-out validation: Hit@10/20, mean rank, NDCG@10/20, MRR, segmented by warm-item-recovery vs. cold-start-exposure]
+```
+
+**Original pipeline** (retired, kept for history — see banner at top of this doc):
 
 ```
 Raw CMS + watch-history data (SQL pulls)

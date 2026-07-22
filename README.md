@@ -46,19 +46,19 @@ The UI points at `http://localhost:8000` by default; override with the `HC_RECS_
 
 | Doc | What's in it |
 |---|---|
-| [docs/DATA_AND_METHODOLOGY.md](docs/DATA_AND_METHODOLOGY.md) | **Start here** — what data was fetched, what fields were engineered, and every technique/methodology used, in plain + technical terms |
-| [docs/APPROACH.md](docs/APPROACH.md) | The overall step-by-step design (content → category, audience → title) |
-| [docs/SCHEMA.md](docs/SCHEMA.md) | Database tables, relationships, and known data-quality quirks |
+| [docs/DATA_AND_METHODOLOGY.md](docs/DATA_AND_METHODOLOGY.md) | **Start here** — has an up-to-date current-production summary at the top, then the full history of data pulled/engineered/tested (including the retired cluster model) below |
+| [docs/APPROACH.md](docs/APPROACH.md) | The original step-by-step design rationale (content → category, audience → title) — audience-clustering steps are retired, tagging/category steps are still live for cold-start fallback; see the status note at the top |
+| [docs/SCHEMA.md](docs/SCHEMA.md) | Database tables, relationships, known data-quality quirks, and how they're actually queried now (PostHog HogQL) |
 | [docs/TAG_TAXONOMY.md](docs/TAG_TAXONOMY.md) | The closed vocabulary of storyline/tone tags |
-| [docs/CATEGORIES.md](docs/CATEGORIES.md) | The 8 Programming Categories, v1 vs. v2 weighting, validation results |
-| [docs/AUDIENCE_CLUSTERS.md](docs/AUDIENCE_CLUSTERS.md) | The 4 audience clusters, title affinity scoring, creator-boost weighting, at-scale validation |
+| [docs/CATEGORIES.md](docs/CATEGORIES.md) | The 8 Programming Categories — still computed and used today, just for cold-start-fallback content similarity instead of audience-cluster scoring |
+| [docs/AUDIENCE_CLUSTERS.md](docs/AUDIENCE_CLUSTERS.md) | **Retired from production** — the audience-cluster mechanism and its validation history, kept as historical record; see the status note at the top |
 
 ## Code
 
 | File | What it does |
 |---|---|
-| [src/pipeline_series_structured.py](src/pipeline_series_structured.py) | Original model on the 500-title tagged sample: content tagging → category clustering → audience clustering → series/season structured linkage → discovery-ranked recommendations, validated against held-out watch history |
-| [src/pipeline_full_catalog.py](src/pipeline_full_catalog.py) | Same model, scaled to the full published catalog (775 titles: 472 movies + 303 series) — structurally simpler since the full pull is already one row per show/movie, no episode-rollup step needed |
+| [src/pipeline_series_structured.py](src/pipeline_series_structured.py) | **Historical/reference, not production** — original cluster-based model on the 500-title tagged sample: content tagging → category clustering → audience clustering → series/season structured linkage → discovery-ranked recommendations |
+| [src/pipeline_full_catalog.py](src/pipeline_full_catalog.py) | **Historical/reference, not production** — same cluster-based model, scaled to the full 775-title catalog. Superseded by `src/recommender.py`'s CF-based scorer |
 | [src/season_continuation.py](src/season_continuation.py) | Next-season recommender + single-list merge helper, kept separate from (but combinable with) the discovery ranking output |
 | [src/recommender.py](src/recommender.py) | Production model: three-tier scoring (item-item CF → content-similarity cold-start fallback → popularity fallback) plus the movie/series type-affinity quota — imported by `backend/app.py` |
 | [backend/app.py](backend/app.py) | FastAPI service: fits the model once at startup, serves `/users`, `/users/{uid}/history`, and `/users/{uid}/recommendations` as JSON |

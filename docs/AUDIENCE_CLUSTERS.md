@@ -1,5 +1,7 @@
 # Audience Taste Clusters (v1 — 272-user validation sample)
 
+> **⚠️ RETIRED from production.** This whole mechanism (K-means audience clusters + cluster-affinity scoring) was superseded by item-item collaborative filtering after CF strictly outperformed it at every scale tested — root cause was that these audience clusters concentrate the majority of users into 1–2 "generic drama viewer" blobs whose item-popularity correlates 0.95+ with global popularity, making cluster-based "personalization" barely distinct from a popularity baseline. See [README.md](../README.md)'s Status section for the comparison numbers and [src/recommender.py](../src/recommender.py) for what's live now. Kept below as historical record of the validation journey, not a description of current production.
+
 Step 3 of [APPROACH.md](APPROACH.md): segment users by *what they watch* (Programming Category consumption mix), not demographics.
 
 ## Method

@@ -1,5 +1,7 @@
 # Content Recommendation — Approach
 
+> **Status note:** Steps 3–4 below (audience clustering, cluster-affinity scoring) describe the *original* design and were the production model through mid-2026. They've since been **retired and replaced by item-item collaborative filtering**, which strictly outperformed them on every held-out metric tested — see [README.md](../README.md)'s Status section and [src/recommender.py](../src/recommender.py) for the current three-tier production scorer (CF → content-similarity cold-start fallback → popularity fallback). Steps 1–2 (content tagging, Programming Categories) are still live — that same content vector now powers the cold-start fallback instead of audience-cluster scoring. This doc is kept as-is for the original design rationale; don't read it as describing current production.
+
 Based on the reference pattern shown in two screenshots (a Netflix-style internal tool): a title-level "Product Creative Brief" showing tag-based **Predicted Programming Categories**, and an "Audiences to Design For" view showing, per audience segment, a category-mix breakdown plus per-title **Likelihood** (over-index) and **Viewers%** scores.
 
 The pattern has two directions built on the same underlying data:

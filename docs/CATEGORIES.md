@@ -1,5 +1,7 @@
 # Programming Categories (v1 — bottom-up, discovered from 500-title sample)
 
+> **Still live, different job than originally designed for.** This K=8 content clustering and its soft-mixture vector are no longer used for audience-cluster scoring (that whole mechanism is retired — see [AUDIENCE_CLUSTERS.md](AUDIENCE_CLUSTERS.md)). It's still computed and used today as the content-similarity vector for the **cold-start fallback** in `src/recommender.py`: titles with too little watch data for item-item CF to score are instead ranked by cosine similarity between this vector and a user's taste profile.
+
 Discovered via K-means clustering (k=8, chosen for interpretability — silhouette scores were flat across k=4-14, so k was picked for a business-usable category count, not a statistical peak) over each title's `storyline_tags` + `overall_tone_tags` multi-hot vector (58 dims: 42 storyline + 16 tone). Each cluster was named by inspecting its dominant tags, genre mix, and content-type split.
 
 Soft mixture (the % columns in `data/content_categories_500.csv`) is a softmax over each title's distance to all 8 cluster centroids (temperature=0.35), not just the hard cluster label — mirroring the reference screenshot's "40% Category A, 26% Category B, ..." format. Average top-1 share is 53.5%, top-2 is 16.1%.

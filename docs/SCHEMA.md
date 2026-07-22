@@ -2,6 +2,8 @@
 
 Entity-relationship diagram of the tables relevant to the content recommendation project, using the `_latest` (deduplicated) variants throughout.
 
+**Access:** these tables are queried through PostHog's HogQL/SQL interface (`mcp__posthog__execute_sql`, ClickHouse-backed) — this is a data-warehouse sync of the underlying Mongo collections, not a direct Mongo connection. HogQL queries default to a 100-row cap unless you pass an explicit `LIMIT`, and large result sets get truncated in the response and written to a file instead — read the file rather than assuming an empty/short result means no data.
+
 ```mermaid
 erDiagram
   CMS_SERIES_LATEST {
@@ -30,6 +32,11 @@ erDiagram
     string user_id FK
     string content_id FK
     int seconds_watched
+    string _id "Mongo ObjectId; embedded timestamp is NOT verified to be real watch time"
+    datetime created_at "real watch-event timestamp, confirmed distinct from _id's and migratedAt's"
+    int content_run_length_secs "title runtime; seconds_watched / this = completion_pct"
+    string content_type "movie, episode, or trailer/promo -- must filter to movie/episode"
+    string content_series_id "populated on a fanned-out companion row, see note below"
   }
   CMS_USER_360 {
     string user_id PK
@@ -67,3 +74,5 @@ erDiagram
 2. **`cms_v_all_content.series_id`/`season_id` exist as columns but are empirically empty** even for real, published episodes — not usable despite being the "obvious" formal link.
 3. **`person_ids` is an array-valued many-to-many link**, not a simple foreign key — both `cms_v_videos_latest` and `cms_v_series_latest` carry an array of `person_id`s that must be exploded/joined against `cms_v_people_latest`.
 4. **`cms_v_user_360` user coverage is incomplete** relative to `cms_v_watch_history_with_content` — a real gap found earlier in this project, not fully root-caused.
+5. **`cms_v_watch_history_with_content` fans out every episode watch into two rows** sharing the same `_id` — one carries `content_permalink`, the other carries `content_series_id`/season/episode number (see [DATA_AND_METHODOLOGY.md](DATA_AND_METHODOLOGY.md) Section 3.8). Grouping by `(user_id, content_id, content_type)` with `MAX()` on the fields you need collapses this before it leaves the query — do this at the HogQL level, not after pulling raw rows, to avoid the response-size cost of duplicate rows.
+6. **`content_run_length_secs` and `created_at` are genuinely per-row, not per-title** — `created_at` is the actual watch event's timestamp (confirmed distinct from `migratedAt`, which is also present on the raw Mongo doc and reflects a later data-migration event, not the watch itself).
