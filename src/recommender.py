@@ -311,14 +311,20 @@ def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watc
     return cand_arr[order[:n]].tolist()
 
 
-# Edge case: below this many watched titles, CF's co-occurrence sum is too thin
-# to trust (often just 1-2 items) -- rank by content-similarity instead of CF.
-MIN_WATCHED_FOR_CF = 3
+# "Low watch history" turned out NOT to be a real edge case -- tested directly
+# (src/experiments/cf_vs_content_breakeven_v2.py): CF beats content-similarity
+# at every bucket from 1 remaining watched title up to 11+, no breakeven point
+# exists (e.g. Hit@10 35.4% vs 10.4% at just 1 remaining title). A count-based
+# MIN_WATCHED_FOR_CF threshold was tried here and REMOVED after this test --
+# it would have actively hurt users with few-but-informative watches. The
+# real trigger for falling back to content-similarity isn't "how many titles,"
+# it's whether CF actually found any co-viewers at all -- see CF_SIGNAL_EPSILON.
 
-# Edge case: CF technically ran (user has >=MIN_WATCHED_FOR_CF watches) but
-# found literally no co-viewers for anything they watched -- every candidate
-# scores exactly 0, so argsort's result is arbitrary tie-broken noise, not a
-# real ranking. Below this we treat CF as having produced no usable signal.
+# Edge case: "no similar users found" -- none of a user's watched titles have
+# any real co-viewers among eligible candidates, so every candidate scores
+# exactly 0 and argsort's result is arbitrary tie-broken noise, not a real
+# ranking (verified on a real user: 3 of 4 watched titles had zero other
+# viewers in our sample). Below this we treat CF as having produced no signal.
 CF_SIGNAL_EPSILON = 1e-9
 
 
@@ -345,26 +351,19 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     else:
         profile = build_profile(watched_idx, remaining.seconds_watched.values)
         cand_arr = np.array(candidates)
+        scores = sim[watched_idx][:, cand_arr].sum(axis=0)
 
-        if len(remaining) < MIN_WATCHED_FOR_CF:
-            # Edge case: watch history too low to trust CF's co-occurrence sum
-            # (often just 1-2 titles) -- rank by content-similarity instead.
+        if len(scores) == 0 or scores.max() <= CF_SIGNAL_EPSILON:
+            # Edge case: "no similar users found" -- none of this user's
+            # watched titles have any real co-viewers among eligible
+            # candidates, so CF's ranking would be tie-broken noise, not
+            # a real signal. Rank by content-similarity instead.
             _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
             order = np.argsort(-sims)
             ranked = cand_arr[order].tolist()
         else:
-            scores = sim[watched_idx][:, cand_arr].sum(axis=0)
-            if len(scores) == 0 or scores.max() <= CF_SIGNAL_EPSILON:
-                # Edge case: "no similar users found" -- none of this user's
-                # watched titles have any real co-viewers among eligible
-                # candidates, so CF's ranking would be tie-broken noise, not
-                # a real signal. Rank by content-similarity instead.
-                _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
-                order = np.argsort(-sims)
-                ranked = cand_arr[order].tolist()
-            else:
-                order = np.argsort(-scores)
-                ranked = cand_arr[order].tolist()
+            order = np.argsort(-scores)
+            ranked = cand_arr[order].tolist()
 
     content_type_arr = model["content_type_arr"]
     type_counts = Counter(content_type_arr[i] for i in watched_idx) if len(remaining) else Counter()
