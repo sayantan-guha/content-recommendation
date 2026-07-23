@@ -381,27 +381,29 @@ def explain_recommendation(model, watched_idx, candidate_idx, overall_pop=None):
     watched_actors = set().union(*(actor_sets[i] for i in watched_idx))
 
     row = series_content.iloc[candidate_idx]
-    # Priority order: a shared actor/director is the most concrete, legible
-    # reason a viewer would recognize; storyline/genre overlap is next most
-    # specific; popularity is the fallback when nothing else applies. Tone
-    # overlap is the weakest/most generic signal, so it's last and only
-    # shown if there's room. Capped to 2 so the tile stays a one-glance line
-    # instead of a full audit trail of every overlapping signal.
+    # Priority order: genre match is the strongest, most legible content
+    # signal, tone next, shared actor third -- these three are what
+    # content_based_ranking's own scoring leans on most heavily (genre and
+    # tone tags dominate the mixture vector's weighting, actor/director is
+    # an explicit boost on top). Storyline/director and popularity are only
+    # shown as a fallback when none of the top three apply. Capped to 2 so
+    # the tile stays a one-glance line instead of a full audit trail of
+    # every overlapping signal.
     reasons = []
+    if row.genre_normalized in watched_genres:
+        reasons.append(f"Similar genre: {row.genre_normalized}")
+    tone_ov = set(row["_tone"]) & watched_tone
+    if tone_ov:
+        reasons.append(f"Similar tone: {next(iter(tone_ov))}")
     act_ov = actor_sets[candidate_idx] & watched_actors
     if act_ov:
         reasons.append(f"Same actor: {next(iter(act_ov))}")
     dir_ov = director_sets[candidate_idx] & watched_dirs
     if dir_ov:
         reasons.append(f"Same director: {next(iter(dir_ov))}")
-    if row.genre_normalized in watched_genres:
-        reasons.append(f"Similar genre: {row.genre_normalized}")
     storyline_ov = set(row["_storyline"]) & watched_storyline
     if storyline_ov:
         reasons.append(f"Similar storyline: {next(iter(storyline_ov))}")
-    tone_ov = set(row["_tone"]) & watched_tone
-    if tone_ov:
-        reasons.append(f"Similar tone: {next(iter(tone_ov))}")
     if overall_pop is not None:
         pop = overall_pop.get(candidate_idx, 0)
         if pop >= overall_pop.quantile(0.9):
