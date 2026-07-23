@@ -381,28 +381,34 @@ def explain_recommendation(model, watched_idx, candidate_idx, overall_pop=None):
     watched_actors = set().union(*(actor_sets[i] for i in watched_idx))
 
     row = series_content.iloc[candidate_idx]
+    # Priority order: a shared actor/director is the most concrete, legible
+    # reason a viewer would recognize; storyline/genre overlap is next most
+    # specific; popularity is the fallback when nothing else applies. Tone
+    # overlap is the weakest/most generic signal, so it's last and only
+    # shown if there's room. Capped to 2 so the tile stays a one-glance line
+    # instead of a full audit trail of every overlapping signal.
     reasons = []
-    if row.genre_normalized in watched_genres:
-        reasons.append(f"genre match ({row.genre_normalized})")
-    storyline_ov = set(row["_storyline"]) & watched_storyline
-    if storyline_ov:
-        reasons.append(f"storyline overlap ({', '.join(list(storyline_ov)[:2])})")
-    tone_ov = set(row["_tone"]) & watched_tone
-    if tone_ov:
-        reasons.append(f"tone overlap ({', '.join(list(tone_ov)[:2])})")
-    dir_ov = director_sets[candidate_idx] & watched_dirs
-    if dir_ov:
-        reasons.append(f"same director ({', '.join(list(dir_ov)[:1])})")
     act_ov = actor_sets[candidate_idx] & watched_actors
     if act_ov:
-        reasons.append(f"same actor ({', '.join(list(act_ov)[:1])})")
+        reasons.append(f"Same actor: {next(iter(act_ov))}")
+    dir_ov = director_sets[candidate_idx] & watched_dirs
+    if dir_ov:
+        reasons.append(f"Same director: {next(iter(dir_ov))}")
+    if row.genre_normalized in watched_genres:
+        reasons.append(f"Similar genre: {row.genre_normalized}")
+    storyline_ov = set(row["_storyline"]) & watched_storyline
+    if storyline_ov:
+        reasons.append(f"Similar storyline: {next(iter(storyline_ov))}")
+    tone_ov = set(row["_tone"]) & watched_tone
+    if tone_ov:
+        reasons.append(f"Similar tone: {next(iter(tone_ov))}")
     if overall_pop is not None:
         pop = overall_pop.get(candidate_idx, 0)
         if pop >= overall_pop.quantile(0.9):
-            reasons.append("high overall popularity")
+            reasons.append("Popular pick")
     if not reasons:
-        reasons.append("weak/generic content similarity only")
-    return reasons
+        reasons.append("Matches your general taste")
+    return reasons[:2]
 
 
 def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):

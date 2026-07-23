@@ -113,7 +113,7 @@ def inject_css():
         .rail-title::before { content:""; width:3px; height:22px; background:var(--hc-gradient); border-radius:2px; flex-shrink:0; }
         .rail-scroll { display:flex; gap:14px; overflow-x:auto; padding-bottom: 10px; }
         .poster-card {
-            flex: 0 0 auto; width: 168px; border-radius: 14px; overflow:hidden;
+            flex: 0 0 auto; width: 232px; border-radius: 14px; overflow:hidden;
             background: #ffffff; box-shadow: 0 2px 10px rgba(0,0,0,0.06);
         }
         .poster-banner {
@@ -137,7 +137,16 @@ def inject_css():
             font-family:'Outfit',sans-serif; font-weight:700; font-size:13px; color:#191919; line-height:1.2;
             margin-bottom:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
         }
-        .poster-genre { font-family:'Manrope',sans-serif; font-size:10px; color:#888888; line-height:1.5; margin-bottom:8px;}
+        .poster-genre { font-family:'Manrope',sans-serif; font-size:11px; color:#888888; line-height:1.5; margin-bottom:8px;}
+        .poster-details {
+            font-family:'Manrope',sans-serif; font-size:11px; color:#666666; line-height:1.65;
+            margin-bottom:9px; padding-top:7px; border-top:1px solid #f0f0f0;
+        }
+        .poster-details b { color:#444444; font-weight:700; }
+        .poster-why {
+            font-family:'Manrope',sans-serif; font-size:11px; color:#1e6b3c; line-height:1.5;
+            background:#eefaf1; border-radius:8px; padding:6px 8px; margin-bottom:9px;
+        }
         .poster-cta {
             display:inline-block; font-family:'Outfit',sans-serif; font-size:9px; font-weight:600; color:#fff;
             background: var(--hc-gradient); border-radius:50px; padding:5px 14px;
@@ -152,10 +161,29 @@ def inject_css():
     st.markdown(css.replace("__GRADIENT__", HC_GRADIENT), unsafe_allow_html=True)
 
 
-def poster_card(title, subtitle, badge_type, rank=None, watched=False, cta_label="▶ Watch Now"):
+def poster_card(title, subtitle, badge_type, rank=None, watched=False, cta_label="▶ Watch Now", details=None, why=None):
     badge_label, badge_css = BADGE_STYLES.get(badge_type, BADGE_STYLES["movie"])
     rank_html = f'<div class="poster-rank">#{rank}</div>' if rank else ""
     watched_html = '<div class="poster-watched">✓ watched</div>' if watched else ""
+
+    details_html = ""
+    if details:
+        lines = []
+        if details.get("storyline_tags"):
+            lines.append(f"<b>Storyline:</b> {', '.join(details['storyline_tags'])}")
+        if details.get("actors"):
+            lines.append(f"<b>Actors:</b> {', '.join(details['actors'])}")
+        if details.get("director"):
+            lines.append(f"<b>Director:</b> {', '.join(details['director'])}")
+        if details.get("tone_tags"):
+            lines.append(f"<b>Tone:</b> {', '.join(details['tone_tags'])}")
+        if details.get("era"):
+            lines.append(f"<b>Era:</b> {details['era']}")
+        if lines:
+            details_html = f'<div class="poster-details">{"<br>".join(lines)}</div>'
+
+    why_html = f'<div class="poster-why">{" • ".join(why)}</div>' if why else ""
+
     return (
         f'<div class="poster-card">'
         f'<div class="poster-banner">{rank_html}{watched_html}'
@@ -164,6 +192,7 @@ def poster_card(title, subtitle, badge_type, rank=None, watched=False, cta_label
         f'<div class="poster-body">'
         f'<div class="poster-title">{title}</div>'
         f'<div class="poster-genre">{subtitle}</div>'
+        f'{why_html}{details_html}'
         f'<span class="poster-cta">{cta_label}</span>'
         f'</div>'
         f'</div>'
@@ -176,31 +205,11 @@ def render_rail(title, items, cta_label="▶ Watch Now"):
         poster_card(
             it["title"], it["subtitle"], it["badge_type"],
             it.get("rank"), it.get("watched", False), cta_label,
+            details=it, why=it.get("why"),
         )
         for it in items
     )
     st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
-
-
-def render_detail_expanders(items):
-    """One expander per item, below its rail: genre/storyline/tone/actor/
-    director/era, plus a "why recommended" line when the item carries one
-    (recommendations only -- watched-history items have nothing to explain).
-    Keeps the poster rail itself uncluttered while the full content detail
-    is one click away.
-    """
-    for it in items:
-        with st.expander(f"{it['title']} — details"):
-            st.markdown(
-                f"**Genre:** {it['genre']}  \n"
-                f"**Era:** {it.get('era', '—')}  \n"
-                f"**Storyline tags:** {', '.join(it.get('storyline_tags', [])) or '—'}  \n"
-                f"**Tone:** {', '.join(it.get('tone_tags', [])) or '—'}  \n"
-                f"**Director:** {', '.join(it.get('director', [])) or '—'}  \n"
-                f"**Actors:** {', '.join(it.get('actors', [])) or '—'}"
-            )
-            if "why" in it:
-                st.markdown(f"**Why recommended:** {'; '.join(it['why'])}")
 
 
 def type_composition_chart_b64(history):
@@ -353,12 +362,6 @@ def main():
         for it in top20
     ]
     render_rail("Recommended For You", rec_items)
-    st.markdown(
-        '<div class="rail-title" style="font-size:14px; margin-top:0.4rem;">'
-        "Content details &amp; why each title was recommended</div>",
-        unsafe_allow_html=True,
-    )
-    render_detail_expanders(rec_items)
 
     history_items = [
         {
@@ -376,11 +379,6 @@ def main():
         for it in history
     ]
     render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
-    st.markdown(
-        '<div class="rail-title" style="font-size:14px; margin-top:0.4rem;">Watched content details</div>',
-        unsafe_allow_html=True,
-    )
-    render_detail_expanders(history_items)
 
 
 if __name__ == "__main__":
