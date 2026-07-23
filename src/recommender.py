@@ -142,6 +142,7 @@ def load_content_model():
         "actor_sets": actor_sets,
         "cid_to_item_id": cid_to_item_id,
         "content_type_arr": series_content["content_type"].values,
+        "era_bucket_arr": series_content["era_bucket"].values,
     }
 
 
@@ -245,6 +246,66 @@ def apply_type_quota(ranked, content_type_arr, type_counts, top_n):
     return [idx for idx in ranked if idx in slate_set][:top_n]
 
 
+ERA_QUOTA_ENABLED = True  # experiment: see era-quota-experiment branch / README
+
+
+def apply_era_quota(top_warm, ranked, era_arr, watched_idx, top_n):
+    """Secondary quota pass, applied after apply_type_quota. CF and content
+    similarity both naturally skew toward the catalog's 2020s-heavy bulk, so
+    a user whose watch history has a real chunk of e.g. 1990s titles gets
+    those crowded out even though same-era candidates score fine on their
+    own similarity terms (shared genre/actor/director etc -- they just never
+    reach the top of a slate dominated by newer titles). This nudges the
+    already-built type-quota slate so each era represented in the user's
+    watch history gets a proportional number of slots, by swapping the best
+    still-unused same-era candidate (from `ranked`, so it's still relevance-
+    ordered, not random) in for the slate's lowest-priority over-quota-era
+    slot. Never invents an era the user hasn't actually watched.
+    """
+    if not len(watched_idx) or not top_n:
+        return top_warm
+
+    era_counts = Counter(era_arr[i] for i in watched_idx)
+    total = sum(era_counts.values())
+    quotas = {e: (top_n * c) / total for e, c in era_counts.items()}
+    floor_quotas = {e: int(q) for e, q in quotas.items()}
+    remainder = top_n - sum(floor_quotas.values())
+    fracs = sorted(quotas, key=lambda e: quotas[e] - floor_quotas[e], reverse=True)
+    for e in fracs[:remainder]:
+        floor_quotas[e] += 1
+
+    slate = list(top_warm)
+    slate_set = set(slate)
+    current_counts = Counter(era_arr[i] for i in slate)
+
+    for era, target in floor_quotas.items():
+        have = current_counts.get(era, 0)
+        need = target - have
+        if need <= 0:
+            continue
+        fill = [i for i in ranked if era_arr[i] == era and i not in slate_set][:need]
+        if not fill:
+            continue
+
+        def is_over_quota(pos):
+            e = era_arr[slate[pos]]
+            return current_counts.get(e, 0) > floor_quotas.get(e, 0)
+
+        removable = sorted(range(len(slate)), key=lambda pos: (not is_over_quota(pos), -pos))
+        for f in fill:
+            if not removable:
+                break
+            pos = removable.pop(0)
+            removed_idx = slate[pos]
+            slate[pos] = f
+            slate_set.discard(removed_idx)
+            slate_set.add(f)
+            current_counts[era_arr[removed_idx]] -= 1
+            current_counts[era] = current_counts.get(era, 0) + 1
+
+    return slate
+
+
 COLD_START_QUOTA_FRACTION = 0.1  # fraction of top_n reserved for cold-start (low-data) titles
 
 # Creator (director/actor) overlap boost, cold-start fallback ONLY -- tested and
@@ -327,6 +388,15 @@ def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watc
 # viewers in our sample). Below this we treat CF as having produced no signal.
 CF_SIGNAL_EPSILON = 1e-9
 
+# Boosting CF scores by era match *before* ranking (instead of only fixing up
+# the era mix afterwards via apply_era_quota) was tried and REJECTED: it
+# dilutes CF's real co-viewer signal with a crude era prior, same failure
+# mode as the rejected creator-boost-on-CF experiment. Monotonically worse
+# the harder it's applied -- at boost weight 1.0, overall Hit@10 fell
+# 45.6%->43.9% and Hit@10 on pre-2020s held-out titles specifically collapsed
+# 51.2%->19.7%. apply_era_quota (a post-hoc slate reorder that never touches
+# CF's own ranking) is the validated version -- see README's Status section.
+
 
 def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     watch = audience["watch"]
@@ -371,6 +441,9 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     cold_n = max(1, round(top_n * COLD_START_QUOTA_FRACTION)) if (top_n >= 5 and COLD_START_QUOTA_FRACTION > 0) else 0
     warm_n = top_n - cold_n
     top_warm = apply_type_quota(ranked, content_type_arr, type_counts, warm_n)
+    if ERA_QUOTA_ENABLED and len(remaining):
+        era_arr = model["era_bucket_arr"]
+        top_warm = apply_era_quota(top_warm, ranked, era_arr, watched_idx, warm_n)
     top_cold = cold_start_candidates(model, profile, eligible_idx, watched, cold_n, watched_idx=watched_idx) if profile is not None else []
     top = top_warm + top_cold
 
