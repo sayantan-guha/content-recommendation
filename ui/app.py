@@ -16,6 +16,7 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 API_BASE = os.environ.get("HC_RECS_API", "http://localhost:8000")
 
@@ -185,6 +186,8 @@ def render_rail(title, items, cta_label="▶ Watch Now"):
 def type_composition_chart_b64(history):
     """Donut chart of movie vs series share, as a base64 PNG (so it can be
     embedded in a flex wrapper for precise alignment against the hero card)."""
+    if not history:
+        return '<div style="text-align:center; color:#9c8d94; font-size:0.85rem; padding:2.4rem 0;">No watch history yet</div>'
     counts = Counter(it["type"] for it in history)
     labels = [t.title() for t in counts]
     values = list(counts.values())
@@ -249,10 +252,43 @@ def main():
             """,
             unsafe_allow_html=True,
         )
+    # st.selectbox alone can only pick from its fixed option list -- typing
+    # a user_id that isn't already an eval_user (e.g. a brand-new/thin-
+    # history user) doesn't work, since a plain dropdown has nowhere to put
+    # free text. A real combobox needs both: browsable suggestions AND free
+    # typing in the same field. st.selectbox's accept_new_options isn't in
+    # the installed Streamlit version (1.40.1), so this uses a text_input
+    # wired to a native HTML5 <datalist> -- one field, browser-native
+    # suggestions from the known user list, still fully editable for any
+    # other id.
     with picker_col:
         st.markdown('<div class="viewer-picker">', unsafe_allow_html=True)
-        uid = st.selectbox("Viewer", eval_users, index=0, label_visibility="collapsed")
+        uid = st.text_input(
+            "Viewer", value=eval_users[0], label_visibility="collapsed", key="uid"
+        ).strip()
+        options_html = "".join(f"<option value=\"{u}\"></option>" for u in eval_users)
+        st.markdown(f'<datalist id="uid-datalist">{options_html}</datalist>', unsafe_allow_html=True)
+        components.html(
+            """
+            <script>
+            (function attachList() {
+                const doc = window.parent.document;
+                const input = doc.querySelector('input[aria-label="Viewer"]');
+                if (input) {
+                    input.setAttribute('list', 'uid-datalist');
+                } else {
+                    setTimeout(attachList, 100);
+                }
+            })();
+            </script>
+            """,
+            height=0,
+        )
         st.markdown("</div>", unsafe_allow_html=True)
+
+    if not uid:
+        st.info("Enter a user ID above to see their recommendations.")
+        st.stop()
 
     st.markdown('<hr style="border-color:#e8e8e8; margin: 0.6rem 0 1.4rem;">', unsafe_allow_html=True)
 

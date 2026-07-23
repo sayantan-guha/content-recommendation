@@ -52,18 +52,16 @@ def list_users():
 
 @app.get("/users/{uid}/history")
 def watch_history(uid: str):
+    # No 404 for an unrecognized/zero-history uid -- recommend_for_user
+    # handles that case (popularity fallback), so an empty history list is a
+    # valid, renderable response rather than an error.
     watch = _state["audience"]["watch"]
-    rows = watch[watch.user_id == uid]
-    if rows.empty:
-        raise HTTPException(404, "user not found or has no eligible watch history")
+    rows = watch[watch.user_id == uid].sort_values("last_watched_at", ascending=False)
     return {"uid": uid, "history": [_item_row(i) for i in rows.item_idx.tolist()]}
 
 
 @app.get("/users/{uid}/recommendations")
 def recommendations(uid: str, top_n: int = 10, held_out_idx: int = None):
-    watch = _state["audience"]["watch"]
-    if uid not in set(watch.user_id):
-        raise HTTPException(404, "user not found or has no eligible watch history")
     top, full_ranked = rec.recommend_for_user(uid, held_out_idx, _state["model"], _state["audience"], top_n=top_n)
     result = {"uid": uid, "recommendations": [_item_row(i) for i in top]}
     if held_out_idx is not None:

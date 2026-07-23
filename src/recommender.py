@@ -160,7 +160,10 @@ def load_audience_model(model):
     watch_ep = watch_ep.dropna(subset=["item_id"])
     watch_ep["completion_pct"] = (watch_ep.seconds_watched / watch_ep.content_run_length_secs).clip(upper=2.0)
     watch_ep = watch_ep[watch_ep.completion_pct >= COMPLETION_THRESHOLD]
-    watch = watch_ep.groupby(["user_id", "item_id"], as_index=False)["seconds_watched"].sum()
+    watch_ep["created_at"] = pd.to_datetime(watch_ep["created_at"], utc=True, format="ISO8601")
+    watch = watch_ep.groupby(["user_id", "item_id"], as_index=False).agg(
+        seconds_watched=("seconds_watched", "sum"), last_watched_at=("created_at", "max")
+    )
     watch["item_idx"] = watch.item_id.map(model["item_to_idx"])
 
     mixture = model["mixture"]
