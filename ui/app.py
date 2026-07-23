@@ -8,12 +8,8 @@ recommendations for a picked viewer -- no model internals shown.
 Run the backend first:  uvicorn backend.app:app --port 8000
 Then the UI:             streamlit run ui/app.py
 """
-import base64
 import os
-from collections import Counter
-from io import BytesIO
 
-import matplotlib.pyplot as plt
 import requests
 import streamlit as st
 
@@ -80,32 +76,6 @@ def inject_css():
             font-family:'Manrope',sans-serif; background:#fff;
         }
         .viewer-picker label { display:none; }
-        .hero {
-            border-radius: 24px; padding: 2.4rem; margin-bottom: 1.8rem; box-sizing:border-box;
-            min-height: 320px;
-            background: __GRADIENT__;
-            position: relative; overflow: hidden; box-shadow: 0 8px 32px rgba(210,8,32,0.2);
-        }
-        .watch-mix-wrap {
-            display:flex; flex-direction:column; justify-content:center; align-items:center;
-            gap: 1rem; min-height: 320px; margin-bottom: 1.8rem;
-        }
-        .hero::after {
-            content:""; position:absolute; top:-60px; right:-60px; width:220px; height:220px;
-            border-radius:88px; background:rgba(255,255,255,0.05);
-        }
-        .hero-inner { position: relative; z-index: 1; max-width: 640px; }
-        .hero-eyebrow {
-            font-family:'Outfit',sans-serif; color:rgba(255,255,255,0.5); font-weight:700; font-size:10px;
-            letter-spacing:0.15em; text-transform:uppercase;
-        }
-        .hero-title { font-family:'Outfit',sans-serif; font-size: 40px; font-weight: 800; color:#fff; margin: 0.4rem 0; letter-spacing:-0.03em;}
-        .hero-meta { font-family:'Manrope',sans-serif; color:rgba(255,255,255,0.8); font-size:0.95rem; margin-bottom: 1.2rem;}
-        .hero-btn {
-            display:inline-block; font-family:'Outfit',sans-serif; padding: 11px 24px; border-radius: 50px;
-            font-weight:700; font-size:12px; background:#fff; color:var(--hc-soot); margin-right:10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor:pointer;
-        }
         .rail-title {
             font-family:'Outfit',sans-serif; font-size: 18px; font-weight:700; color:#191919;
             margin: 1.6rem 0 0.8rem 0; display:flex; align-items:center; gap:9px; letter-spacing:-0.02em;
@@ -212,50 +182,6 @@ def render_rail(title, items, cta_label="▶ Watch Now"):
     st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
 
 
-def type_composition_chart_b64(history):
-    """Donut chart of movie vs series share, as a base64 PNG (so it can be
-    embedded in a flex wrapper for precise alignment against the hero card)."""
-    if not history:
-        return '<div style="text-align:center; color:#9c8d94; font-size:0.85rem; padding:2.4rem 0;">No watch history yet</div>'
-    counts = Counter(it["type"] for it in history)
-    labels = [t.title() for t in counts]
-    values = list(counts.values())
-    # soft pastel takes on the brand red/velvet hues
-    colors = ["#f6a6b2", "#c9a7e0"]
-    total = sum(values)
-
-    fig, ax = plt.subplots(figsize=(2.6, 2.6))
-    fig.patch.set_alpha(0.0)
-    wedges, _, autotexts = ax.pie(
-        values,
-        labels=labels,
-        colors=colors[: len(values)],
-        autopct=lambda p: f"{p:.0f}%",
-        startangle=90,
-        pctdistance=0.72,
-        labeldistance=1.14,
-        wedgeprops={"width": 0.42, "edgecolor": "#fafafa", "linewidth": 1.2},
-        textprops={"fontfamily": "sans-serif", "fontsize": 8.5, "color": "#5b4a52", "fontweight": "600"},
-    )
-    for at in autotexts:
-        at.set_color("#4a3b42")
-        at.set_fontweight("bold")
-        at.set_fontsize(8.5)
-
-    # center label: total titles watched
-    ax.text(0, 0.10, f"{total}", ha="center", va="center",
-            fontsize=14, fontweight="bold", color="#4a3b42", fontfamily="sans-serif")
-    ax.text(0, -0.16, "titles", ha="center", va="center",
-            fontsize=7, color="#9c8d94", fontfamily="sans-serif")
-
-    ax.set_aspect("equal")
-    buf = BytesIO()
-    fig.savefig(buf, format="png", transparent=True, bbox_inches="tight", pad_inches=0.05, dpi=200)
-    plt.close(fig)
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return f'<img src="data:image/png;base64,{b64}" style="width:300px; display:block; margin:0 auto;">'
-
-
 def main():
     inject_css()
 
@@ -313,97 +239,16 @@ def main():
 
     st.markdown('<hr style="border-color:#e8e8e8; margin: 0.6rem 0 1.4rem;">', unsafe_allow_html=True)
 
-    rec_resp = api_get(f"/users/{uid}/recommendations", top_n=20)
-    top20 = rec_resp["recommendations"]
     history = api_get(f"/users/{uid}/history")["history"]
+    cmp_resp = api_get(f"/users/{uid}/compare", top_n=20)
 
-    # Hero: the user's own top recommendation, with the watch-mix donut alongside it.
-    hero = top20[0]
-    hero_col, chart_col = st.columns([2.4, 1])
-    with hero_col:
-        st.markdown(
-            f"""
-            <div class="hero">
-                <div class="hero-inner">
-                    <div class="hero-eyebrow">Top pick for this viewer</div>
-                    <div class="hero-title">{hero['title']}</div>
-                    <div class="hero-meta">{hero['type'].title()} • {hero['genre']}</div>
-                    <span class="hero-btn">▶ Watch Now</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with chart_col:
-        chart_img = type_composition_chart_b64(history)
-        st.markdown(
-            f"""
-            <div class="watch-mix-wrap">
-                <div class="rail-title" style="justify-content:center; margin:0;">Watch Mix</div>
-                {chart_img}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    rec_items = [
-        {
-            "title": it["title"],
-            "subtitle": f"{it['type'].title()} • {it['genre']}",
-            "badge_type": it["type"],
-            "genre": it["genre"],
-            "era": it.get("era"),
-            "storyline_tags": it.get("storyline_tags", []),
-            "tone_tags": it.get("tone_tags", []),
-            "director": it.get("director", []),
-            "actors": it.get("actors", []),
-            "why": it.get("why", []),
-        }
-        for it in top20
-    ]
-    render_rail("Recommended For You", rec_items)
-
-    history_items = [
-        {
-            "title": it["title"],
-            "subtitle": f"{it['type'].title()} • {it['genre']}",
-            "badge_type": it["type"],
-            "watched": True,
-            "genre": it["genre"],
-            "era": it.get("era"),
-            "storyline_tags": it.get("storyline_tags", []),
-            "tone_tags": it.get("tone_tags", []),
-            "director": it.get("director", []),
-            "actors": it.get("actors", []),
-        }
-        for it in history
-    ]
-    render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
-
-    # low-watch-history-threshold-experiment: manual CF vs. content-based vs.
-    # production side-by-side, for the fixed set of 10 low-watch-history
-    # users this branch's picker is restricted to (see backend
-    # LOW_HISTORY_USERS / src/experiments/low_watch_history_comparison.py).
-    st.markdown('<hr style="border-color:#e8e8e8; margin: 1.6rem 0 1rem;">', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="rail-title" style="font-size:20px;">Technique Comparison (low watch-history)</div>',
-        unsafe_allow_html=True,
-    )
-    cmp_resp = api_get(f"/users/{uid}/compare", top_n=10)
-    epsilon_flag = (
-        " — **below CF_SIGNAL_EPSILON, would fall back to content-based**" if cmp_resp["below_cf_epsilon"] else ""
-    )
-    st.markdown(
-        f"**Watched titles:** {cmp_resp['n_watched']}  •  "
-        f"**CF signal strength (max co-viewer score):** {cmp_resp['cf_signal_max']:.4f}{epsilon_flag}"
-    )
-
-    def _cmp_items(rows):
+    def _items(rows, watched=False):
         return [
             {
                 "title": r["title"],
                 "subtitle": f"{r['type'].title()} • {r['genre']}",
                 "badge_type": r["type"],
+                "watched": watched,
                 "genre": r["genre"],
                 "era": r.get("era"),
                 "storyline_tags": r.get("storyline_tags", []),
@@ -415,12 +260,14 @@ def main():
             for r in rows
         ]
 
+    history_items = _items(history, watched=True)
+    render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
+
     if cmp_resp["n_watched"] == 0:
-        st.info("This user has zero watched titles -- CF and content-based both need a profile to build from.")
+        st.info("This user has zero watched titles -- content-based and CF both need a profile to build from.")
     else:
-        render_rail("CF only", _cmp_items(cmp_resp["cf"]))
-        render_rail("Content-based only", _cmp_items(cmp_resp["content_based"]))
-    render_rail("Production (blended)", _cmp_items(cmp_resp["production"]))
+        render_rail("Content-Based Recommendations", _items(cmp_resp["content_based"]))
+        render_rail("CF Recommendations", _items(cmp_resp["cf"]))
 
 
 if __name__ == "__main__":
