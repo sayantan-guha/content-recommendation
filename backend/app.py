@@ -141,7 +141,14 @@ def compare_techniques(uid: str, top_n: int = 10):
         cf_signal_max = float(cf_scores.max()) if len(cf_scores) else 0.0
         cf_order = np.argsort(-cf_scores)
         cf_top = cand_arr[cf_order[:top_n]]
-        cf_rows = [_item_row(i, why=why(i)) for i in cf_top]
+        # CF's actual signal is co-viewing, not genre/tag/cast overlap -- use
+        # explain_cf_recommendation (which of the user's watched titles drove
+        # this candidate's CF score) instead of the content-based explainer,
+        # so the "why" here is honest about what actually ranked it.
+        cf_rows = [
+            _item_row(i, why=rec.explain_cf_recommendation(model, sim, watched_idx, i) or ["Weak co-viewing signal"])
+            for i in cf_top
+        ]
 
         profile = build_profile(watched_idx, user_rows.seconds_watched.values)
         candidates_all = [i for i in range(len(model["mixture"])) if i not in watched]

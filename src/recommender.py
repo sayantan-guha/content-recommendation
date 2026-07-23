@@ -411,6 +411,35 @@ def explain_recommendation(model, watched_idx, candidate_idx, overall_pop=None):
     return reasons[:2]
 
 
+def explain_cf_recommendation(model, sim, watched_idx, candidate_idx, top_k=2):
+    """CF-honest version of explain_recommendation: CF's actual scoring
+    signal is co-viewing (cosine similarity between items over the binary
+    watch matrix), not genre/tag/cast overlap -- a candidate can score high
+    under CF for reasons that have nothing to do with any of those. This
+    explains a CF pick using that same co-viewing signal instead: which of
+    the user's own watched titles contributed the most to this candidate's
+    CF score, phrased as "co-watched with viewers of X". Returns an empty
+    list if the candidate has no real co-viewing overlap with anything the
+    user watched (score is genuinely 0 for every watched title).
+    """
+    series_content = model["series_content"]
+    contributions = sim[watched_idx, candidate_idx]
+    total = contributions.sum()
+    if total <= 0:
+        return []
+
+    order = np.argsort(-contributions)[:top_k]
+    reasons = []
+    for pos in order:
+        contrib = contributions[pos]
+        if contrib <= 0:
+            continue
+        watched_title = series_content.iloc[watched_idx[pos]].title_english
+        share = contrib / total
+        reasons.append(f"Co-watched with viewers of {watched_title} ({share:.0%} of match)")
+    return reasons
+
+
 def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
     """Rank titles with too little watch data to trust CF/cluster signal (below
     the eligibility threshold) by content-tag similarity to the user's taste
