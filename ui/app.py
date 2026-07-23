@@ -380,6 +380,48 @@ def main():
     ]
     render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
 
+    # low-watch-history-threshold-experiment: manual CF vs. content-based vs.
+    # production side-by-side, for the fixed set of 10 low-watch-history
+    # users this branch's picker is restricted to (see backend
+    # LOW_HISTORY_USERS / src/experiments/low_watch_history_comparison.py).
+    st.markdown('<hr style="border-color:#e8e8e8; margin: 1.6rem 0 1rem;">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="rail-title" style="font-size:20px;">Technique Comparison (low watch-history)</div>',
+        unsafe_allow_html=True,
+    )
+    cmp_resp = api_get(f"/users/{uid}/compare", top_n=10)
+    epsilon_flag = (
+        " — **below CF_SIGNAL_EPSILON, would fall back to content-based**" if cmp_resp["below_cf_epsilon"] else ""
+    )
+    st.markdown(
+        f"**Watched titles:** {cmp_resp['n_watched']}  •  "
+        f"**CF signal strength (max co-viewer score):** {cmp_resp['cf_signal_max']:.4f}{epsilon_flag}"
+    )
+
+    def _cmp_items(rows):
+        return [
+            {
+                "title": r["title"],
+                "subtitle": f"{r['type'].title()} • {r['genre']}",
+                "badge_type": r["type"],
+                "genre": r["genre"],
+                "era": r.get("era"),
+                "storyline_tags": r.get("storyline_tags", []),
+                "tone_tags": r.get("tone_tags", []),
+                "director": r.get("director", []),
+                "actors": r.get("actors", []),
+                "why": r.get("why", []),
+            }
+            for r in rows
+        ]
+
+    if cmp_resp["n_watched"] == 0:
+        st.info("This user has zero watched titles -- CF and content-based both need a profile to build from.")
+    else:
+        render_rail("CF only", _cmp_items(cmp_resp["cf"]))
+        render_rail("Content-based only", _cmp_items(cmp_resp["content_based"]))
+    render_rail("Production (blended)", _cmp_items(cmp_resp["production"]))
+
 
 if __name__ == "__main__":
     main()
