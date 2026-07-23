@@ -35,19 +35,32 @@ def fit_model():
     _state["audience"] = audience
 
 
-def _item_row(idx):
+def _item_row(idx, why=None):
     row = _state["model"]["series_content"].iloc[idx]
-    return {
+    out = {
         "idx": int(idx),
         "title": row["title_english"],
         "type": row["content_type"],
         "genre": row["genre_normalized"],
+        "storyline_tags": list(row["_storyline"]),
+        "tone_tags": list(row["_tone"]),
+        "director": list(row["_director"]),
+        "actors": list(row["_actor"])[:3],
+        "era": row["era_bucket"],
     }
+    if why is not None:
+        out["why"] = why
+    return out
 
 
 @app.get("/users")
 def list_users():
-    return {"users": _state["audience"]["eval_users"]}
+    # Every user with any watch data, not just eval_users (>=4 watches) --
+    # a strictly larger pick list for the UI dropdown. recommend_for_user
+    # works for any uid regardless of this list (even ones with zero rows
+    # here), so this only affects what's easy to browse-select.
+    watch = _state["audience"]["watch"]
+    return {"users": sorted(watch.user_id.unique().tolist())}
 
 
 @app.get("/users/{uid}/history")
@@ -62,8 +75,19 @@ def watch_history(uid: str):
 
 @app.get("/users/{uid}/recommendations")
 def recommendations(uid: str, top_n: int = 10, held_out_idx: int = None):
-    top, full_ranked = rec.recommend_for_user(uid, held_out_idx, _state["model"], _state["audience"], top_n=top_n)
-    result = {"uid": uid, "recommendations": [_item_row(i) for i in top]}
+    watch = _state["audience"]["watch"]
+    model = _state["model"]
+    audience = _state["audience"]
+    top, full_ranked = rec.recommend_for_user(uid, held_out_idx, model, audience, top_n=top_n)
+
+    watched_idx = watch[watch.user_id == uid].item_idx.tolist()
+    overall_pop = audience["overall_pop"]
+    result = {
+        "uid": uid,
+        "recommendations": [
+            _item_row(i, why=rec.explain_recommendation(model, watched_idx, i, overall_pop)) for i in top
+        ],
+    }
     if held_out_idx is not None:
         rank = full_ranked.index(held_out_idx) + 1 if held_out_idx in full_ranked else None
         result["held_out"] = {"idx": held_out_idx, "rank": rank}

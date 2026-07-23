@@ -16,7 +16,6 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 
 API_BASE = os.environ.get("HC_RECS_API", "http://localhost:8000")
 
@@ -183,6 +182,27 @@ def render_rail(title, items, cta_label="▶ Watch Now"):
     st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
 
 
+def render_detail_expanders(items):
+    """One expander per item, below its rail: genre/storyline/tone/actor/
+    director/era, plus a "why recommended" line when the item carries one
+    (recommendations only -- watched-history items have nothing to explain).
+    Keeps the poster rail itself uncluttered while the full content detail
+    is one click away.
+    """
+    for it in items:
+        with st.expander(f"{it['title']} — details"):
+            st.markdown(
+                f"**Genre:** {it['genre']}  \n"
+                f"**Era:** {it.get('era', '—')}  \n"
+                f"**Storyline tags:** {', '.join(it.get('storyline_tags', [])) or '—'}  \n"
+                f"**Tone:** {', '.join(it.get('tone_tags', [])) or '—'}  \n"
+                f"**Director:** {', '.join(it.get('director', [])) or '—'}  \n"
+                f"**Actors:** {', '.join(it.get('actors', [])) or '—'}"
+            )
+            if "why" in it:
+                st.markdown(f"**Why recommended:** {'; '.join(it['why'])}")
+
+
 def type_composition_chart_b64(history):
     """Donut chart of movie vs series share, as a base64 PNG (so it can be
     embedded in a flex wrapper for precise alignment against the hero card)."""
@@ -252,42 +272,34 @@ def main():
             """,
             unsafe_allow_html=True,
         )
-    # st.selectbox alone can only pick from its fixed option list -- typing
-    # a user_id that isn't already an eval_user (e.g. a brand-new/thin-
-    # history user) doesn't work, since a plain dropdown has nowhere to put
-    # free text. A real combobox needs both: browsable suggestions AND free
-    # typing in the same field. st.selectbox's accept_new_options isn't in
-    # the installed Streamlit version (1.40.1), so this uses a text_input
-    # wired to a native HTML5 <datalist> -- one field, browser-native
-    # suggestions from the known user list, still fully editable for any
-    # other id.
+    # st.selectbox instead of a free-text combobox: typing filters/searches
+    # its options live, it has a built-in clear ("x") button, and any pick
+    # reruns the app immediately -- no separate blur/Enter step needed,
+    # unlike a text_input (which Streamlit only ever commits on blur/Enter).
+    # Trade-off: it can only pick users already in the list below (now every
+    # user with any watch data, not just eval_users -- see backend /users),
+    # not a genuinely new/arbitrary user_id.
+    # index=None is what makes the widget clearable at all (a plain int
+    # index never has a "cleared" state to return to) -- pre-seeding
+    # session_state before creating the widget is what still gives it a
+    # real default selection on first load instead of starting blank.
+    if "uid_picker" not in st.session_state:
+        st.session_state["uid_picker"] = eval_users[0]
+
     with picker_col:
         st.markdown('<div class="viewer-picker">', unsafe_allow_html=True)
-        uid = st.text_input(
-            "Viewer", value=eval_users[0], label_visibility="collapsed", key="uid"
-        ).strip()
-        options_html = "".join(f"<option value=\"{u}\"></option>" for u in eval_users)
-        st.markdown(f'<datalist id="uid-datalist">{options_html}</datalist>', unsafe_allow_html=True)
-        components.html(
-            """
-            <script>
-            (function attachList() {
-                const doc = window.parent.document;
-                const input = doc.querySelector('input[aria-label="Viewer"]');
-                if (input) {
-                    input.setAttribute('list', 'uid-datalist');
-                } else {
-                    setTimeout(attachList, 100);
-                }
-            })();
-            </script>
-            """,
-            height=0,
-        )
+        uid = st.selectbox(
+            "Pick a viewer",
+            eval_users,
+            index=None,
+            placeholder="Pick a viewer...",
+            label_visibility="collapsed",
+            key="uid_picker",
+        ) or ""
         st.markdown("</div>", unsafe_allow_html=True)
 
     if not uid:
-        st.info("Enter a user ID above to see their recommendations.")
+        st.info("Pick a viewer above to see their recommendations.")
         st.stop()
 
     st.markdown('<hr style="border-color:#e8e8e8; margin: 0.6rem 0 1.4rem;">', unsafe_allow_html=True)
@@ -330,10 +342,23 @@ def main():
             "title": it["title"],
             "subtitle": f"{it['type'].title()} • {it['genre']}",
             "badge_type": it["type"],
+            "genre": it["genre"],
+            "era": it.get("era"),
+            "storyline_tags": it.get("storyline_tags", []),
+            "tone_tags": it.get("tone_tags", []),
+            "director": it.get("director", []),
+            "actors": it.get("actors", []),
+            "why": it.get("why", []),
         }
         for it in top20
     ]
     render_rail("Recommended For You", rec_items)
+    st.markdown(
+        '<div class="rail-title" style="font-size:14px; margin-top:0.4rem;">'
+        "Content details &amp; why each title was recommended</div>",
+        unsafe_allow_html=True,
+    )
+    render_detail_expanders(rec_items)
 
     history_items = [
         {
@@ -341,10 +366,21 @@ def main():
             "subtitle": f"{it['type'].title()} • {it['genre']}",
             "badge_type": it["type"],
             "watched": True,
+            "genre": it["genre"],
+            "era": it.get("era"),
+            "storyline_tags": it.get("storyline_tags", []),
+            "tone_tags": it.get("tone_tags", []),
+            "director": it.get("director", []),
+            "actors": it.get("actors", []),
         }
         for it in history
     ]
     render_rail(f"Watched History ({len(history_items)})", history_items, cta_label="↺ Watch Again")
+    st.markdown(
+        '<div class="rail-title" style="font-size:14px; margin-top:0.4rem;">Watched content details</div>',
+        unsafe_allow_html=True,
+    )
+    render_detail_expanders(history_items)
 
 
 if __name__ == "__main__":

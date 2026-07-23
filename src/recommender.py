@@ -358,6 +358,53 @@ def content_based_ranking(model, mixture_profile, candidates, watched_idx=None):
     return cand_arr, sims
 
 
+def explain_recommendation(model, watched_idx, candidate_idx, overall_pop=None):
+    """Human-readable reason a candidate was recommended, given the user's
+    watched titles: genre match, storyline/tone tag overlap, shared director/
+    actor, or high overall popularity when nothing else explains it. Used for
+    UI display only -- doesn't affect ranking. Returns a list of short
+    reason strings (empty if truly nothing overlaps and popularity is low).
+    """
+    series_content = model["series_content"]
+    director_sets = model["director_sets"]
+    actor_sets = model["actor_sets"]
+
+    if len(watched_idx) == 0:
+        return ["no watch history to compare against"]
+
+    watched_genres = set(series_content.iloc[i].genre_normalized for i in watched_idx)
+    watched_storyline, watched_tone = set(), set()
+    for i in watched_idx:
+        watched_storyline |= set(series_content.iloc[i]["_storyline"])
+        watched_tone |= set(series_content.iloc[i]["_tone"])
+    watched_dirs = set().union(*(director_sets[i] for i in watched_idx))
+    watched_actors = set().union(*(actor_sets[i] for i in watched_idx))
+
+    row = series_content.iloc[candidate_idx]
+    reasons = []
+    if row.genre_normalized in watched_genres:
+        reasons.append(f"genre match ({row.genre_normalized})")
+    storyline_ov = set(row["_storyline"]) & watched_storyline
+    if storyline_ov:
+        reasons.append(f"storyline overlap ({', '.join(list(storyline_ov)[:2])})")
+    tone_ov = set(row["_tone"]) & watched_tone
+    if tone_ov:
+        reasons.append(f"tone overlap ({', '.join(list(tone_ov)[:2])})")
+    dir_ov = director_sets[candidate_idx] & watched_dirs
+    if dir_ov:
+        reasons.append(f"same director ({', '.join(list(dir_ov)[:1])})")
+    act_ov = actor_sets[candidate_idx] & watched_actors
+    if act_ov:
+        reasons.append(f"same actor ({', '.join(list(act_ov)[:1])})")
+    if overall_pop is not None:
+        pop = overall_pop.get(candidate_idx, 0)
+        if pop >= overall_pop.quantile(0.9):
+            reasons.append("high overall popularity")
+    if not reasons:
+        reasons.append("weak/generic content similarity only")
+    return reasons
+
+
 def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
     """Rank titles with too little watch data to trust CF/cluster signal (below
     the eligibility threshold) by content-tag similarity to the user's taste
