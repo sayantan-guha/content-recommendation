@@ -432,6 +432,33 @@ def explain_recommendation(model, watched_idx, candidate_idx, overall_pop=None):
     return reasons[:2]
 
 
+def explain_cf_recommendation(model, sim, watched_idx, candidate_idx, top_k=2):
+    """CF-honest reason a candidate was recommended: CF's actual scoring
+    signal is co-viewing (summed cosine similarity between the candidate and
+    each watched title, over the binary watch matrix) -- genre/tone/cast
+    overlap (explain_recommendation) never enters that calculation, so using
+    it to explain a CF pick is a coincidence, not the real reason, and can
+    even reference a signal that doesn't overlap at all. This instead
+    reports which watched title(s) actually drove the score, with the real
+    similarity number attached, e.g. "Co-watched with viewers of X
+    (similarity 0.60)". Returns an empty list if the candidate has zero
+    co-viewing overlap with everything the user watched (CF_SIGNAL_EPSILON
+    territory -- recommend_for_user would have already fallen back to
+    content-based ranking in that case, so this shouldn't normally fire).
+    """
+    series_content = model["series_content"]
+    contributions = sim[watched_idx, candidate_idx]
+    order = np.argsort(-contributions)[:top_k]
+    reasons = []
+    for pos in order:
+        score = contributions[pos]
+        if score <= 0:
+            continue
+        watched_title = series_content.iloc[watched_idx[pos]].title_english
+        reasons.append(f"Co-watched with viewers of {watched_title} (similarity {score:.2f})")
+    return reasons
+
+
 def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
     """Rank titles with too little watch data to trust CF/cluster signal (below
     the eligibility threshold) by content-tag similarity to the user's taste
@@ -496,10 +523,17 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     #   1-2 watched  -> combination of content-based similarity and popularity
     #   3-4 watched  -> content-based only
     #   5+ watched   -> CF (with the existing no-co-viewer-signal fallback)
+    # `method` records which scorer actually produced `ranked`, so callers
+    # (the backend's "why recommended" explanation, in particular) can use a
+    # technique-honest explanation instead of always falling back to content
+    # overlap -- CF's real signal is co-viewing, not genre/tone/cast, so
+    # explaining a CF pick with those would be describing a coincidence, not
+    # the actual reason.
     if n_watched == 0:
         # Edge case: zero watch history at all -- no profile to build, no CF,
         # no content-similarity possible either. Fall back to popularity.
         profile = None
+        method = "popularity"
         pop = overall_pop.reindex(candidates, fill_value=0)
         ranked = pop.sort_values(ascending=False).index.tolist()
     else:
@@ -507,6 +541,7 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
         cand_arr = np.array(candidates)
 
         if n_watched <= 2:
+            method = "content+popularity"
             _, cb_sims = content_based_ranking(model, profile, cand_arr, watched_idx)
             pop_vals = overall_pop.reindex(cand_arr, fill_value=0).values.astype(float)
             n_cand = max(len(cand_arr) - 1, 1)
@@ -516,6 +551,7 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
             order = np.argsort(blended)
             ranked = cand_arr[order].tolist()
         elif n_watched <= 4:
+            method = "content-based"
             _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
             order = np.argsort(-sims)
             ranked = cand_arr[order].tolist()
@@ -526,10 +562,12 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
                 # watched titles have any real co-viewers among eligible
                 # candidates, so CF's ranking would be tie-broken noise, not
                 # a real signal. Rank by content-similarity instead.
+                method = "content-based"
                 _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
                 order = np.argsort(-sims)
                 ranked = cand_arr[order].tolist()
             else:
+                method = "cf"
                 order = np.argsort(-scores)
                 ranked = cand_arr[order].tolist()
 
@@ -563,4 +601,9 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
                 backfill = pop.sort_values(ascending=False).index.tolist()
             top = top + backfill[: top_n - len(top)]
 
-    return top, ranked
+    # `ranked` (the tier's primary ranking) is what reflects `method` -- the
+    # cold-start slots and any backfill are always content-based/popularity
+    # regardless of tier, and never appear in `ranked` at all, so they're
+    # never CF-explained even when method is "cf".
+    cf_idx = set(ranked) if method == "cf" else set()
+    return top, ranked, {"method": method, "cf_idx": cf_idx}

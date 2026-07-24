@@ -81,9 +81,10 @@ def watch_history(uid: str):
 @app.get("/users/{uid}/recommendations")
 def recommendations(uid: str, top_n: int = 10, held_out_idx: int = None):
     watch = _state["audience"]["watch"]
+    sim = _state["audience"]["sim"]
     model = _state["model"]
     audience = _state["audience"]
-    _, full_ranked = rec.recommend_for_user(uid, held_out_idx, model, audience, top_n=top_n)
+    _, full_ranked, meta = rec.recommend_for_user(uid, held_out_idx, model, audience, top_n=top_n)
 
     # full_ranked is sorted purely by similarity/CF score, before the
     # type/era quota reordering and cold-start backfill get applied (those
@@ -93,11 +94,23 @@ def recommendations(uid: str, top_n: int = 10, held_out_idx: int = None):
 
     watched_idx = watch[watch.user_id == uid].item_idx.tolist()
     overall_pop = audience["overall_pop"]
+
+    def why(i):
+        # Genre/tone/cast overlap is a coincidence when the actual scorer
+        # was CF (CF never looks at any of that) -- for items CF itself
+        # ranked, explain with CF's real signal (which watched title's
+        # co-viewers drove the score, with the actual similarity number)
+        # instead of a plausible-sounding but disconnected content match.
+        if i in meta["cf_idx"]:
+            reasons = rec.explain_cf_recommendation(model, sim, watched_idx, i)
+            if reasons:
+                return reasons
+        return rec.explain_recommendation(model, watched_idx, i, overall_pop)
+
     result = {
         "uid": uid,
-        "recommendations": [
-            _item_row(i, why=rec.explain_recommendation(model, watched_idx, i, overall_pop)) for i in top
-        ],
+        "method": meta["method"],
+        "recommendations": [_item_row(i, why=why(i)) for i in top],
     }
     if held_out_idx is not None:
         rank = full_ranked.index(held_out_idx) + 1 if held_out_idx in full_ranked else None

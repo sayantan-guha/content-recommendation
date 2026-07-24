@@ -52,7 +52,7 @@ def warm_item_recovery(model, audience, top_n=20):
 
     ranks, hit10, hit20, ndcg10, ndcg20, mrr = [], [], [], [], [], []
     for uid, held_idx in holdout_choice.items():
-        _, ranked = rec.recommend_for_user(uid, held_idx, model, audience, top_n=top_n)
+        _, ranked, _ = rec.recommend_for_user(uid, held_idx, model, audience, top_n=top_n)
         if held_idx not in ranked:
             continue
         r = ranked.index(held_idx) + 1
@@ -85,14 +85,14 @@ def cold_start_exposure(model, audience, top_n=20, sample_size=500):
 
     exposed_with_fallback, exposed_without_fallback = 0, 0
     for uid in sample:
-        top, _ = rec.recommend_for_user(uid, None, model, audience, top_n=top_n)
+        top, _, _ = rec.recommend_for_user(uid, None, model, audience, top_n=top_n)
         if any(i not in eligible_idx for i in top):
             exposed_with_fallback += 1
 
         orig_quota = rec.COLD_START_QUOTA_FRACTION
         rec.COLD_START_QUOTA_FRACTION = 0.0
         try:
-            top_no_fallback, _ = rec.recommend_for_user(uid, None, model, audience, top_n=top_n)
+            top_no_fallback, _, _ = rec.recommend_for_user(uid, None, model, audience, top_n=top_n)
         finally:
             rec.COLD_START_QUOTA_FRACTION = orig_quota
         if any(i not in eligible_idx for i in top_no_fallback):
