@@ -12,7 +12,12 @@ st.set_page_config(page_title="All Recommendations — Hoichoi Recommender", lay
 
 inject_css()
 
-uid = st.session_state.get("uid_picker")
+# The "View More" tile does a real browser navigation (not Streamlit's own
+# client-side page routing), which starts a fresh session -- session_state
+# from the main page isn't available here. The uid is passed via URL query
+# param instead, which survives a full page load regardless of session
+# continuity.
+uid = st.query_params.get("uid") or st.session_state.get("uid_picker")
 
 st.markdown(
     """

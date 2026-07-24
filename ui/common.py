@@ -43,6 +43,13 @@ def inject_css():
             --hc-success: #1a8754; --hc-warning: #e6a817;
         }
         #MainMenu, footer, header {visibility: hidden;}
+        /* Hide Streamlit's auto-generated multipage sidebar nav list and its
+           collapse toggle -- the "View More" tile is the only navigation
+           into the All Recommendations page, no page-list sidebar needed. */
+        [data-testid="stSidebarNav"], [data-testid="stSidebar"], [data-testid="collapsedControl"],
+        [data-testid="stBaseButton-headerNoPadding"] {
+            display: none !important;
+        }
         html, body, [class*="css"] { font-family: 'Manrope', sans-serif; }
         .block-container {padding-top: 1rem; max-width: 100%; background: #fafafa;}
         [data-testid="stAppViewContainer"] { background: #fafafa; }
