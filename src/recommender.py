@@ -94,7 +94,18 @@ def load_content_model():
     content["_tone"] = content["overall_tone_tags"].apply(parse_list)
     content["_maturity"] = content["maturity_tags"].apply(parse_list).apply(norm_maturity)
     content["_director"] = content["director_names"].apply(parse_list)
-    content["_actor"] = content["actor_names"].apply(parse_list)
+    # CMS's raw person_ids per title is ordered: index 0 is always the
+    # director, everything after is cast in billing order -- director_names/
+    # actor_names here already split on that (director_names is index 0,
+    # actor_names is the rest, order preserved). Only the first 2 of that
+    # remainder are kept as "lead actors" -- the rest of the cast is real
+    # data but too long a tail to mean anything as a similarity/explanation
+    # signal, so it's dropped here at the source rather than truncated
+    # ad hoc at each call site. Everything downstream (actor_sets, the
+    # content-based creator-overlap boost, and the "why recommended"
+    # explanation) reads from this same _actor column, so this one line is
+    # the single place that rule applies.
+    content["_actor"] = content["actor_names"].apply(parse_list).apply(lambda actors: actors[:2])
     content["item_id"] = content.apply(
         lambda r: f"movie::{r.content_id}" if r.content_type == "movie" else f"series::{r.content_id}",
         axis=1,

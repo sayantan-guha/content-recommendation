@@ -45,7 +45,12 @@ def _item_row(idx, why=None):
         "storyline_tags": list(row["_storyline"]),
         "tone_tags": list(row["_tone"]),
         "director": list(row["_director"]),
-        "actors": list(row["_actor"])[:3],
+        # _actor is already capped to the first 2 (lead actors) in
+        # load_content_model -- no separate truncation here, so what's
+        # displayed always matches what the "why" explanation actually
+        # compared against (previously a display-only [:3] slice could show
+        # different actors than the ones a "same actor" reason referenced).
+        "actors": list(row["_actor"]),
         "era": row["era_bucket"],
     }
     if why is not None:
