@@ -171,7 +171,7 @@ def main():
     ]
     render_rail(
         "Recommended For You", rec_items,
-        more_link="pages/1_All_Recommendations.py", more_label="View More →",
+        more_link="All_Recommendations", more_label="View More →",
     )
 
     history_items = [

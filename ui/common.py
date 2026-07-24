@@ -110,7 +110,9 @@ def inject_css():
             flex-direction:column; gap:10px; cursor:pointer;
             background: #fdf2f4;
             border: 1.5px dashed var(--hc-red);
+            min-height: 240px; text-decoration:none;
         }
+        .poster-card-more:hover { background: #fce3e8; }
         .poster-more-label {
             font-family:'Outfit',sans-serif; font-weight:700; font-size:13px; color:var(--hc-red);
         }
@@ -198,9 +200,11 @@ def poster_card(title, subtitle, badge_type, rank=None, watched=False, cta_label
 
 
 def render_rail(title, items, cta_label="▶ Watch Now", more_link=None, more_label="View More"):
-    """more_link, if given, is a "pages/xxx.py?query=string" target -- appends
-    a dashed "view more" tile at the end of the rail linking to it (a real
-    Streamlit page navigation, so the browser back button returns here)."""
+    """more_link, if given, is the target page's URL slug (e.g.
+    "All_Recommendations", matching a pages/N_All_Recommendations.py file)
+    -- appended as the last tile *inside* the same scrolling rail (a real
+    anchor to a genuine Streamlit page route, so the browser back button
+    still returns here), instead of a separate link below the rail."""
     st.markdown(f'<div class="rail-title">{title}</div>', unsafe_allow_html=True)
     cards = "".join(
         poster_card(
@@ -210,9 +214,13 @@ def render_rail(title, items, cta_label="▶ Watch Now", more_link=None, more_la
         )
         for it in items
     )
-    st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
     if more_link:
-        st.page_link(more_link, label=more_label, icon="➡️")
+        cards += (
+            f'<a href="{more_link}" target="_self" class="poster-card poster-card-more">'
+            f'<span class="poster-more-label">{more_label}</span>'
+            f'</a>'
+        )
+    st.markdown(f'<div class="rail-scroll">{cards}</div>', unsafe_allow_html=True)
 
 
 def render_grid(items, cta_label="▶ Watch Now"):
