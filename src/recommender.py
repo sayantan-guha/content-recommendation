@@ -413,35 +413,6 @@ def explain_recommendation(model, watched_idx, candidate_idx, overall_pop=None):
     return reasons[:2]
 
 
-def explain_cf_recommendation(model, sim, watched_idx, candidate_idx, top_k=2):
-    """CF-honest version of explain_recommendation: CF's actual scoring
-    signal is co-viewing (cosine similarity between items over the binary
-    watch matrix), not genre/tag/cast overlap -- a candidate can score high
-    under CF for reasons that have nothing to do with any of those. This
-    explains a CF pick using that same co-viewing signal instead: which of
-    the user's own watched titles contributed the most to this candidate's
-    CF score, phrased as "co-watched with viewers of X". Returns an empty
-    list if the candidate has no real co-viewing overlap with anything the
-    user watched (score is genuinely 0 for every watched title).
-    """
-    series_content = model["series_content"]
-    contributions = sim[watched_idx, candidate_idx]
-    total = contributions.sum()
-    if total <= 0:
-        return []
-
-    order = np.argsort(-contributions)[:top_k]
-    reasons = []
-    for pos in order:
-        contrib = contributions[pos]
-        if contrib <= 0:
-            continue
-        watched_title = series_content.iloc[watched_idx[pos]].title_english
-        share = contrib / total
-        reasons.append(f"Co-watched with viewers of {watched_title} ({share:.0%} of match)")
-    return reasons
-
-
 def cold_start_candidates(model, mixture_profile, eligible_idx, watched, n, watched_idx=None):
     """Rank titles with too little watch data to trust CF/cluster signal (below
     the eligibility threshold) by content-tag similarity to the user's taste
@@ -499,7 +470,14 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     watched = set(user_rows.item_idx) - ({held_out_idx} if held_out_idx is not None else set())
     candidates = [i for i in eligible_idx if i not in watched]
 
-    if len(remaining) == 0:
+    n_watched = len(remaining)
+
+    # Watch-count-tiered scoring strategy:
+    #   0 watched    -> popularity (unchanged)
+    #   1-2 watched  -> combination of content-based similarity and popularity
+    #   3-4 watched  -> content-based only
+    #   5+ watched   -> CF (with the existing no-co-viewer-signal fallback)
+    if n_watched == 0:
         # Edge case: zero watch history at all -- no profile to build, no CF,
         # no content-similarity possible either. Fall back to popularity.
         profile = None
@@ -508,19 +486,33 @@ def recommend_for_user(uid, held_out_idx, model, audience, top_n=10):
     else:
         profile = build_profile(watched_idx, remaining.seconds_watched.values)
         cand_arr = np.array(candidates)
-        scores = sim[watched_idx][:, cand_arr].sum(axis=0)
 
-        if len(scores) == 0 or scores.max() <= CF_SIGNAL_EPSILON:
-            # Edge case: "no similar users found" -- none of this user's
-            # watched titles have any real co-viewers among eligible
-            # candidates, so CF's ranking would be tie-broken noise, not
-            # a real signal. Rank by content-similarity instead.
+        if n_watched <= 2:
+            _, cb_sims = content_based_ranking(model, profile, cand_arr, watched_idx)
+            pop_vals = overall_pop.reindex(cand_arr, fill_value=0).values.astype(float)
+            n_cand = max(len(cand_arr) - 1, 1)
+            cb_rank_pct = np.argsort(np.argsort(-cb_sims)) / n_cand
+            pop_rank_pct = np.argsort(np.argsort(-pop_vals)) / n_cand
+            blended = 0.5 * cb_rank_pct + 0.5 * pop_rank_pct
+            order = np.argsort(blended)
+            ranked = cand_arr[order].tolist()
+        elif n_watched <= 4:
             _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
             order = np.argsort(-sims)
             ranked = cand_arr[order].tolist()
         else:
-            order = np.argsort(-scores)
-            ranked = cand_arr[order].tolist()
+            scores = sim[watched_idx][:, cand_arr].sum(axis=0)
+            if len(scores) == 0 or scores.max() <= CF_SIGNAL_EPSILON:
+                # Edge case: "no similar users found" -- none of this user's
+                # watched titles have any real co-viewers among eligible
+                # candidates, so CF's ranking would be tie-broken noise, not
+                # a real signal. Rank by content-similarity instead.
+                _, sims = content_based_ranking(model, profile, cand_arr, watched_idx)
+                order = np.argsort(-sims)
+                ranked = cand_arr[order].tolist()
+            else:
+                order = np.argsort(-scores)
+                ranked = cand_arr[order].tolist()
 
     content_type_arr = model["content_type_arr"]
     type_counts = Counter(content_type_arr[i] for i in watched_idx) if len(remaining) else Counter()
