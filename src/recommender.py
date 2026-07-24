@@ -82,6 +82,14 @@ def l2_normalize_rows(mat):
 
 def load_content_model():
     content = pd.read_csv(f"{DATA}/content_features_full_tagged.csv")
+    # Filter out Hindi content. The catalog's audio_languages column is
+    # unreliable for this (303/775 rows are null, and of the rows that do
+    # have a value only 15 are ever tagged ["HI"] -- all 15 already a subset
+    # of the titles below), so the actual signal is the "(Hindi)" suffix
+    # hoichoi appends to every Hindi-dubbed title's title_english. 149 rows
+    # match (134 series, 15 movies) out of 775 total.
+    content = content[~content["title_english"].str.contains(r"\(Hindi\)", case=False, na=False, regex=True)]
+    content = content.reset_index(drop=True)
     content["_storyline"] = content["storyline_tags"].apply(parse_list)
     content["_tone"] = content["overall_tone_tags"].apply(parse_list)
     content["_maturity"] = content["maturity_tags"].apply(parse_list).apply(norm_maturity)
