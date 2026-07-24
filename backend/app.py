@@ -78,7 +78,13 @@ def recommendations(uid: str, top_n: int = 10, held_out_idx: int = None):
     watch = _state["audience"]["watch"]
     model = _state["model"]
     audience = _state["audience"]
-    top, full_ranked = rec.recommend_for_user(uid, held_out_idx, model, audience, top_n=top_n)
+    _, full_ranked = rec.recommend_for_user(uid, held_out_idx, model, audience, top_n=top_n)
+
+    # full_ranked is sorted purely by similarity/CF score, before the
+    # type/era quota reordering and cold-start backfill get applied (those
+    # optimize for slate composition, not strict relevance order) -- sliced
+    # directly so what's returned is genuinely sorted by similarity.
+    top = full_ranked[:top_n]
 
     watched_idx = watch[watch.user_id == uid].item_idx.tolist()
     overall_pop = audience["overall_pop"]

@@ -313,7 +313,7 @@ def main():
 
     st.markdown('<hr style="border-color:#e8e8e8; margin: 0.6rem 0 1.4rem;">', unsafe_allow_html=True)
 
-    rec_resp = api_get(f"/users/{uid}/recommendations", top_n=20)
+    rec_resp = api_get(f"/users/{uid}/recommendations", top_n=10)
     top20 = rec_resp["recommendations"]
     history = api_get(f"/users/{uid}/history")["history"]
 
