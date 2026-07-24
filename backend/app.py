@@ -18,21 +18,20 @@ from fastapi.middleware.cors import CORSMiddleware
 import recommender as rec
 
 # low-watch-history-threshold-experiment branch only: restrict the picker to
-# the same 10 users manually reviewed in
-# src/experiments/low_watch_history_comparison.py (watch counts 1-7), so the
-# CF-vs-content-based-vs-production comparison UI below has a fixed,
-# already-analyzed set to click through instead of picking blind from 1075.
+# a fixed, already-analyzed set of users instead of picking blind from 1075.
+# Second batch -- 10 fresh users (not overlapping the first 1-7 watch-count
+# batch), spanning watch counts 5-10, for continued manual review.
 LOW_HISTORY_USERS = [
-    "f21f6dd3-a0a7-43e7-9c6b-acbd22c32492",  # 1 watched title
-    "992f20d3-eb6d-4445-9a28-3656bc94ea7e",  # 2
-    "424c6911-1e61-4e95-bef1-09e860456c09",  # 2
-    "c26c6c6e-e157-4d77-93e6-a98cc09ff133",  # 3
-    "ea34c535-09cf-4e49-9479-c282f19b2c43",  # 4
-    "070caab9-ef26-4c97-be4c-6cc999eb609f",  # 4
-    "a419d8f3-3bbc-4211-a389-627eb103a607",  # 5
-    "b9286548-856d-4c8a-8fdd-5a3c211ea522",  # 6
-    "4e8e425e-e618-4147-98e7-7c932b39683c",  # 6
-    "d9cbf5eb-3532-4067-9031-e5d10f4b967a",  # 7
+    "5eaee6b1-4d49-4966-b973-02fe920f16ca",  # 5 watched titles
+    "70bdb36a-9c79-4ebb-975c-f52255a1eac0",  # 5
+    "f2cd168d-c675-4cb8-8c91-608ce2ca478b",  # 6
+    "a06d8343-05b5-47d7-aefc-3d2c82078dcf",  # 6
+    "ad07f91b-48f4-4ef4-9558-fc1c9c004205",  # 7
+    "92077b8d-3809-41eb-8631-94fac46ed993",  # 7
+    "6f2122bc-5143-4576-9536-77d51e25855a",  # 8
+    "599ea337-7e35-47fa-9336-689befc5418e",  # 8
+    "262c50df-ac05-40ec-9907-d5463a074f53",  # 9
+    "b2007c79-dc77-4567-9b28-e656a7ff36b6",  # 10
 ]
 
 app = FastAPI(title="Hoichoi Recommendation API")
